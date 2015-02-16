@@ -1,5 +1,7 @@
+#define USE_EMUL_DSO
 #include "emulDSO.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <float.h>
 #include <math.h>
 #include <utility>
@@ -17,22 +19,145 @@ using namespace Gdiplus;
 #define ULONG_PRT unsigned long*
 #endif
 
-#include "dataManager.hpp"
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//#include "dataManager.hpp"
 
-//gdiplus
-static ULONG_PTR  gdiplusToken;
+struct data_entry
+{
+    union {
+        float time;
+        float x;
+    };
+    union {
+        float value;
+        float y;
+    };
+};
 
-LRESULT CALLBACK WndProc( HWND, UINT, WPARAM, LPARAM ) ;        //声明用来处理消息的函数
+struct data_info
+{
+    int id;     //data id
+    int gid;    //group id
+    const char * name;
+    const char * style;
+    std::vector<data_entry> data;
+    float range_min;
+    float range_max;
+};
+struct group_info
+{
+    bool bIsDigital;
+    float range_min;
+    float range_max;
+    std::vector<int> ids;   //data id of this group
+};
+static void get_group_name(const char * name, char * gname)
+{
+    const char * pdot = strrchr(name, '.');
+    int cnt = strlen(name);
+    if (pdot)
+        cnt = pdot - name;
 
-static HANDLE dso_thread;
+    strncpy(gname, name, cnt);
+    gname[cnt] = '\0';
+}
+//it is very danger to use pointer with STL, so we use vector & id reference as main storage mechanism
+//   *group list is only created when new data name are met
+//   *data range may keep changing when new data arrived
+// these are all maintained by data_manager now;
+struct DataManager
+{
+    std::vector<data_info>                      data;           //for most basic storage & iteration (both refernced by id).
+    std::map<std::string, int>                  name2id;        //based on data, provide dataname key based reference
 
+    std::vector<group_info>                     group;
+    std::map<std::string, int>                  gname2ids;      //based on data, provide groupname key based reference
+
+    float                                       record_time;
+    void ticktock(float time_step_sec) { record_time += time_step_sec; }
+
+    void clear()
+    {
+        group.clear();
+        data.clear();
+        name2id.clear();
+        gname2ids.clear();
+        record_time = 0;
+    }
+
+    void record(const char * data_name, const char * style, float value){
+        record(data_name, value, record_time, style);
+    }
+
+    void record(const char * data_name, float value, float x, const char * style)
+    {
+        data_entry p;
+        p.time = x;
+        p.value = value;
+
+        data_info *pdi = NULL;
+        group_info *pg = NULL;
+        if (name2id.find(data_name) == name2id.end())
+        {
+            data_info dnew;
+            data.push_back(dnew);
+
+            pdi = &(data.back());
+            pdi->id = data.size() - 1;
+            pdi->name = data_name;
+            pdi->style = style;
+            pdi->range_min = value;
+            pdi->range_max = value;
+
+            //mapping name
+            name2id[data_name] = pdi->id;
+
+            //new data name met(rarely), time to maintain groups
+            //and add new data in a groups
+            char group_name[128];
+            get_group_name(data_name, group_name);
+            if (gname2ids.find(group_name) == gname2ids.end())
+            {
+                group_info gnew;
+                group.push_back(gnew);
+                pg = &(group.back());
+                pdi->gid = group.size() - 1;
+                gname2ids[group_name] = pdi->gid;
+
+                pg->bIsDigital = true;
+                pg->range_max = value;
+                pg->range_min = value;
+            }
+            else
+                pdi->gid = gname2ids[group_name];
+
+            pg = &(group[pdi->gid]);
+            pg->ids.push_back(pdi->id);     //add this new data into group
+            if (pg->bIsDigital && (strstr(pdi->style, "d") == NULL)) pg->bIsDigital = false;
+        }
+        else
+        {
+            pdi = &(data[name2id[data_name]]);
+            pg = &(group[pdi->gid]);
+        }
+        //maintain data ranges
+        if (pdi->range_min > value) pdi->range_min = value;
+        if (pdi->range_max < value) pdi->range_max = value;
+        if (pg->range_min > value) pg->range_min = value;
+        if (pg->range_max < value) pg->range_max = value;
+        pdi->data.push_back(p);
+    }
+};
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
 struct DSOCoordinate
 {
 	Rect rc;
 	float x0, x1, y0, y1;
 	float scale_x, scale_y;
 };
-
 
 struct DSOClass
 {
@@ -50,6 +175,11 @@ struct DSOClass
     CachedBitmap   * pcachedBitmap;
     bool            bDirty;
 
+    Font           * pfontAnnot;
+    Font           * pfontDigital;
+    Font           * pfontTicksY;
+    Font           * pfontTicksX;
+
     CRITICAL_SECTION critical_sec_data;
     ///////////////////////////////////////////////////////////////////////////////
     //data recording interface 
@@ -64,7 +194,6 @@ struct DSOClass
 		time_x0 = 0; 
 		time_x1 = data_manager.record_time;
     }
-    void ticktock(float step_sec){ data_manager.ticktock(step_sec); }
     ///////////////////////////////////////////////////////////////////////////////
 
     void create(const char * ptitle, int plot_width, int plot_height);
@@ -75,23 +204,27 @@ struct DSOClass
     float			scale_time;
     float           time_x0;
     float           time_x1;
+    float           time_cursor;
 
 	vector<DSOCoordinate> coord;
 	
 	void push_coord(Graphics &graphics, Rect &rc, float x0, float x1,float y0, float y1);
 	void pop_coord(Graphics &graphics);
 	void set_coord(Graphics &graphics, DSOCoordinate &cc, bool bDrawAxis = false);
-	void transform(Point polyPoints[], int cnt);
-	void transform(PointF polyPoints[], int cnt);
-	
-	void draw_curve(Graphics &graphics, data_info & di);
+    void draw_digital(Graphics &graphics, data_info & di, int id);
+	void draw_curve(Graphics &graphics, data_info & di, int id);
+
+    void magnify(int x, int delta);
+    void settime(float x_set);
+    float x2time(int xPos);
+    void setcursor(float x_set);
 
 	static unsigned __stdcall Main(void* param);
 	static LRESULT CALLBACK WndProc( HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam );
 };
 
 static DSOClass dso;
-
+static ULONG_PTR  gdiplusToken;
 
 void DSOClass::create(const char * ptitle, int plot_width, int plot_height)
 {
@@ -100,17 +233,23 @@ void DSOClass::create(const char * ptitle, int plot_width, int plot_height)
     title = ptitle;
     width = plot_width;
     height = plot_height;
+    vmargin = 20;
+    hmargin = 80;
+
+    time_cursor = 0;
 
     pmemBitmap = NULL;
     pcachedBitmap = NULL;
     bDirty = true;
 
-    vmargin = 20;
-    hmargin = 80;
-
  	// Initialize GDI+.
 	GdiplusStartupInput  gdiplusStartupInput;
 	GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
+    pfontAnnot = new Font(L"Arial", 16, FontStyleItalic, UnitPixel);
+    pfontDigital = new Font(L"Arial", 16, FontStyleBold, UnitPixel);
+    pfontTicksY = new Font(L"Consolas", 14, FontStyleRegular, UnitPixel);
+    pfontTicksX = new Font(L"Consolas", 12, FontStyleRegular, UnitPixel);
+
 	main_thread = (HANDLE)_beginthreadex(NULL, 0, Main, this, 0, NULL);
 	scale_time = 1.0;
     data_manager.clear();
@@ -120,6 +259,10 @@ void DSOClass::close(void)
 {
 	DWORD thid = ::GetThreadId(main_thread);
 	PostThreadMessage(thid, WM_QUIT,0,0);
+    delete pfontAnnot;
+    delete pfontDigital;
+    delete pfontTicksY;
+    delete pfontTicksX;
 	Gdiplus::GdiplusShutdown(gdiplusToken);
 }
 
@@ -201,14 +344,13 @@ void DSOClass::set_coord(Graphics &graphics, DSOCoordinate &cc, bool bDrawAxis)
 		graphics.DrawPath(&pen, &path);
 
         //Draw the ticks(with number): 
-        Font font(L"Consolas", 16, FontStyleRegular, UnitPixel);
         StringFormat stringformat;
         stringformat.SetAlignment(StringAlignmentFar);
         stringformat.SetLineAlignment(StringAlignmentCenter);
         graphics.SetTextRenderingHint(TextRenderingHintAntiAlias);
         SolidBrush brush(Color(255, 100, 100, 100));
         RectF txtBox;
-        graphics.MeasureString(L"99.90", 4, &font, RectF(), &stringformat, &txtBox);
+        graphics.MeasureString(L"99.90", 4, pfontTicksY, RectF(), &stringformat, &txtBox);
         txtBox.X = cc.x0*cc.scale_x - hmargin;
 		txtBox.Width =(REAL) hmargin;
 
@@ -220,19 +362,18 @@ void DSOClass::set_coord(Graphics &graphics, DSOCoordinate &cc, bool bDrawAxis)
         for (int i = 0; i < ticks.size(); i++)
         {
             txtBox.Y = ticks[i] * cc.scale_y - txtBox.Height / 2;
-            //if (ticks[i] - )
             if (N >= 0)  swprintf(strinfo, L"%.0f", ticks[i]);
             else if (N >= -1) swprintf(strinfo, L"%.1f", ticks[i]);
             else if (N >= -2) swprintf(strinfo, L"%.2f", ticks[i]);
             else if (N >= -3) swprintf(strinfo, L"%.3f", ticks[i]);
             else if (N >= -4) swprintf(strinfo, L"%.4f", ticks[i]);
             else swprintf(strinfo, L"%.05g", ticks[i]);
-            graphics.DrawString(strinfo, wcslen(strinfo), &font, txtBox, &stringformat, &brush);
+            graphics.DrawString(strinfo, wcslen(strinfo), pfontTicksY, txtBox, &stringformat, &brush);
             graphics.DrawLine(&pen, PointF(cc.x0*cc.scale_x, ticks[i] * cc.scale_y), PointF(cc.x0*cc.scale_x + 5, ticks[i] * cc.scale_y));
         }
         
         stringformat.SetAlignment(StringAlignmentCenter);
-        graphics.MeasureString(L" 99.90 ", 7, &font, RectF(), &stringformat, &txtBox);
+        graphics.MeasureString(L" 99.90 ", 7, pfontTicksX, RectF(), &stringformat, &txtBox);
         N = generate_ticks(cc.x0, cc.x1, (cc.rc.Width / txtBox.Width), ticks);
         txtBox.Y = cc.y0*cc.scale_y;
         for (int i = 0; i < ticks.size(); i++)
@@ -242,119 +383,154 @@ void DSOClass::set_coord(Graphics &graphics, DSOCoordinate &cc, bool bDrawAxis)
             else if (N >= -1) swprintf(strinfo, L"%.1f", ticks[i]);
             else if (N >= -2) swprintf(strinfo, L"%.2f", ticks[i]);
             else swprintf(strinfo, L"%.05g", ticks[i]);
-            graphics.DrawString(strinfo, wcslen(strinfo), &font, txtBox, &stringformat, &brush);
+            graphics.DrawString(strinfo, wcslen(strinfo), pfontTicksX, txtBox, &stringformat, &brush);
             graphics.DrawLine(&pen, PointF(ticks[i] * cc.scale_x, cc.y0*cc.scale_y), PointF(ticks[i] * cc.scale_x, cc.y0*cc.scale_y - 5));
         }
 	}
 	graphics.SetClip(&region);
 }
-void DSOClass::transform(Point polyPoints[], int cnt)
-{
-	DSOCoordinate &cc = coord.back();
-	for(int i =0;i<cnt;i++)
-	{
-		polyPoints[i].X = (INT)(polyPoints[i].X * cc.scale_x);
-		polyPoints[i].Y = (INT)(polyPoints[i].Y * cc.scale_y);
-	}
-}
-void DSOClass::transform(PointF polyPoints[], int cnt)
-{
-	DSOCoordinate &cc = coord.back();
-	for(int i =0;i<cnt;i++)
-	{
-		polyPoints[i].X = polyPoints[i].X * cc.scale_x;
-		polyPoints[i].Y = polyPoints[i].Y * cc.scale_y;
-	}
-}
 
+static const ARGB argb_table[] = {
+    Color::Red,         Color::Lime,        Color::Blue,            Color::Brown, 
+    Color::DarkGreen,   Color::DarkBlue,    Color::DeepSkyBlue,     Color::DeepPink,
+    Color::BlueViolet, Color::DarkCyan, Color::DarkGoldenrod, Color::Purple,
+    Color::BurlyWood, Color::Cornsilk, Color::Orange, Color::Pink, Color::AliceBlue, Color::LawnGreen, Color::LightPink, Color::LightGreen, Color::LightBlue,
+};
 
-void DSOClass::draw_curve(Graphics &graphics, data_info & di)
+void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
 {
-	//绘图
-	
-	//PointF curvePoints[] = {PointF(0.0f, +10.0f),PointF(10.0f, -10.0f),PointF(20.0f, +10.0f),PointF(30.0f, -10.0f)}; 
-    //transform(curvePoints, 4);
-
-    
     DSOCoordinate &cc = coord.back();
-    static const Color color_table[] = { 
-		Color(255, 0, 0), Color(0, 255, 0), Color(0, 0, 255),
- 		Color(0x80, 0, 0), Color(0x80, 0, 0x80), Color(0x48, 0xd1, 0xcc),
-		Color(0xFF, 0xC0, 0xCB), Color(0x80, 0x80, 0), Color(0, 0, 0x80) };
+    WCHAR strinfo[128];
+    StringFormat stringformat;
+    stringformat.SetAlignment(StringAlignmentCenter);
+    stringformat.SetLineAlignment(StringAlignmentCenter);
+    Color c(argb_table[0]);
+    SolidBrush BgBrush(c);
+    SolidBrush FgBrush(c);
+    unsigned int i0 = 0;
+    while (i0 < di.data.size() && di.data[i0].time < cc.x0) i0++;
+    if(i0 > 0) i0--;
 
-    //style: analog, digital
-    if (strstr(di.style, "d"))
+    float fCursorValue = di.data[i0].value;
+    for (unsigned int i = 0; i <= di.data.size(); i++)
     {
-		//digital signal
-		WCHAR strinfo[32];
-        Font font(L"Arial", 16, FontStyleBold, UnitPixel);
-        StringFormat stringformat;
-        stringformat.SetAlignment(StringAlignmentCenter);
-        stringformat.SetLineAlignment(StringAlignmentCenter);
-
-        SolidBrush BgBrush(color_table[0]);
-		SolidBrush FgBrush(color_table[0]);
-		unsigned int i0 = 0;
-        for (unsigned int i = 0; i <= di.data.size(); i++)
+        if ((i == di.data.size()) ||
+            (i > 0 && di.data[i].value != di.data[i - 1].value) ||
+            (di.data[i].time > cc.x1))
         {
-			if((i == di.data.size()) ||
-			   (i > 0 && di.data[i].second != di.data[i-1].second))
-			{
-				Color color;
-				int data = (int)(di.data[i0].second);
-				//draw data from i0 to(i-1)
-				int cid = data & 7;
-				BgBrush.SetColor(color_table[cid]);
-				BgBrush.GetColor(&color);
-				FgBrush.SetColor(Color(255-color.GetR(),255-color.GetG(),255-color.GetB()));
-				float w;
-				if(i < di.data.size()) w = (di.data[i].first - di.data[i0].first) * cc.scale_x;
-				else w = (di.data[i-1].first - di.data[i0].first) * cc.scale_x;
-				RectF rc(di.data[i0].first * cc.scale_x, 1.0f * cc.scale_y, w, -2.0f * cc.scale_y);
-				graphics.FillRectangle(&BgBrush, rc);
-				swprintf(strinfo, L"%d", data);
-				graphics.DrawString(strinfo, wcslen(strinfo), &font, rc, &stringformat, &FgBrush);
-				i0 = i;
-			}
+            int data = (int)(di.data[i0].value);
+            //draw data from i0 to(i-1)
+            int cid = data % (sizeof(argb_table) / sizeof(argb_table[0]));
+            BgBrush.SetColor(Color(argb_table[cid]));
+            FgBrush.SetColor(Color((~argb_table[cid]) | Color::AlphaMask));
+            float w;
+            if (i < di.data.size()) w = (di.data[i].time - di.data[i0].time) * cc.scale_x;
+            else w = (data_manager.record_time - di.data[i0].time) * cc.scale_x;
+            RectF rc(di.data[i0].time * cc.scale_x, (cc.y0 + id + 1) * cc.scale_y, w, -1.0f * cc.scale_y);
+            graphics.FillRectangle(&BgBrush, rc);
+            swprintf(strinfo, L"%d", data);
+            graphics.DrawString(strinfo, wcslen(strinfo), pfontDigital, rc, &stringformat, &FgBrush);
+            i0 = i;
         }
+        if (i<di.data.size() && di.data[i].time <= time_cursor) fCursorValue = di.data[i].value;
+    }
+    
+    //draw data cursor
+    bool bDrawCursor = (time_cursor > cc.x0 && time_cursor < cc.x1);
+    if (bDrawCursor)
+    {
+        Pen penCursor(Color::Black, 1);
+        graphics.DrawLine(&penCursor, PointF(time_cursor*cc.scale_x, cc.y0*cc.scale_y), PointF(time_cursor*cc.scale_x, cc.y1*cc.scale_y));
+    }
+
+    WCHAR strname[128];
+    if (bDrawCursor)
+    {
+        mbstowcs(strname, di.name, 128);
+        swprintf(strinfo, L"%s:%d", strname, (int)(fCursorValue));
+    }
+    else 
+        mbstowcs(strinfo, di.name, 128);
+    
+    RectF txtBox;
+    graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnot, RectF(), &stringformat, &txtBox);
+    txtBox.X = cc.x1 * cc.scale_x - txtBox.Width;
+    txtBox.Y = (cc.y0 + id + 1) * cc.scale_y;
+
+    //graphics.FillRectangle(&FgBrush, txtBox);
+    graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnot, txtBox, &stringformat, &FgBrush);
+}
+
+
+void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
+{
+    DSOCoordinate &cc = coord.back();
+	REAL dashValues[4] = { 1, 1, 1, 1 };
+    const char * pcfg;
+    Pen pen(Color::Green, 1);
+
+	pcfg = strstr(di.style, "c");    if (pcfg) pen.SetColor(Color(argb_table[pcfg[1] - '0']));
+    pcfg = strstr(di.style, "w");    if (pcfg) pen.SetWidth(pcfg[1] - '0');
+    pcfg = strstr(di.style, ".");    if (pcfg) pen.SetDashPattern(dashValues, 2);
+    Color color(0x80, 0, 0);
+    pen.GetColor(&color);
+
+    float time_cursor_lc = -999990;
+    
+    PointF * curvePoints = new PointF[di.data.size()];
+    float fCursorValue = 0;
+    for (unsigned int i = 0; i < di.data.size(); i++)
+    {
+        curvePoints[i].X = di.data[i].time * cc.scale_x;
+        curvePoints[i].Y = di.data[i].value * cc.scale_y;
+        if (di.data[i].time <= time_cursor){
+            time_cursor_lc = di.data[i].time;
+            fCursorValue = di.data[i].value;
+        }
+    }
+    
+    graphics.DrawCurve(&pen, curvePoints, di.data.size());
+    if (strstr(di.style, "p"))
+    {
+        SolidBrush redBrush(color);
+        int pw = pen.GetWidth();
+        for (unsigned int i = 0; i < di.data.size(); i++)
+            graphics.FillRectangle(&redBrush, Rect(curvePoints[i].X - pw, curvePoints[i].Y - pw, pw * 2 + 1, pw * 2 + 1));
+    }
+    delete[]curvePoints;
+
+    //draw data cursor
+    bool bDrawCursor = (time_cursor_lc > cc.x0 && time_cursor_lc < cc.x1);
+    if (bDrawCursor && id == 0)
+    {
+        Pen penCursor(Color::Black, 1);
+        pen.SetDashPattern(dashValues, 2);
+        graphics.DrawLine(&penCursor, PointF(time_cursor_lc*cc.scale_x, cc.y0*cc.scale_y), PointF(time_cursor_lc*cc.scale_x, cc.y1*cc.scale_y));
+    }
+
+    //draw annotation at upper right corner?
+    StringFormat stringformat;
+    stringformat.SetAlignment(StringAlignmentCenter);
+    stringformat.SetLineAlignment(StringAlignmentCenter);
+    SolidBrush AnnotBrush(color);
+    SolidBrush AnnotBgBrush(Color(200, 255,255,255));
+
+    WCHAR strinfo[128];
+    WCHAR strname[128];
+    if (bDrawCursor)
+    {
+        mbstowcs(strname, di.name, 128);
+        swprintf(strinfo, L"%s:%.2f", strname, fCursorValue);
     }
     else
-    {
-		REAL dashValues[4] = { 1, 1, 1, 1 };
+        mbstowcs(strinfo, di.name, 128);
 
-        const char * pcfg;
-        Pen pen(Color::Green, 1);
-
-		pcfg = strstr(di.style, "c");
-        if (pcfg) pen.SetColor(color_table[pcfg[1] - '0']);
-        pcfg = strstr(di.style, "w");
-        if (pcfg) pen.SetWidth(pcfg[1] - '0');
-        pcfg = strstr(di.style, ".");
-        if (pcfg) pen.SetDashPattern(dashValues, 2);
-        
-
-        PointF * curvePoints = new PointF[di.data.size()];
-        for (unsigned int i = 0; i < di.data.size(); i++)
-        {
-            curvePoints[i].X = di.data[i].first * cc.scale_x;
-            curvePoints[i].Y = di.data[i].second * cc.scale_y;
-        }
-        // Draw the curve.
-        graphics.DrawCurve(&pen, curvePoints, di.data.size());
-
-        //draw point
-        if (strstr(di.style, "p"))
-        {
-            //Draw the points in the curve.
-            Color color(0x80,0,0);
-            pen.GetColor(&color);
-            SolidBrush redBrush(color);
-            int pw = pen.GetWidth();
-            for (unsigned int i = 0; i < di.data.size(); i++)
-                graphics.FillRectangle(&redBrush, Rect(curvePoints[i].X - pw, curvePoints[i].Y - pw, pw * 2 + 1, pw * 2 + 1));
-        }
-        delete[]curvePoints;
-    }
+    RectF txtBox;
+    graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnot, RectF(), &stringformat, &txtBox);
+    txtBox.X = cc.x1 * cc.scale_x - txtBox.Width;
+    txtBox.Y = cc.y1 * cc.scale_y + txtBox.Height * id;
+    graphics.FillRectangle(&AnnotBgBrush, txtBox);
+    graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnot, txtBox, &stringformat, &AnnotBrush);
 
 }
 
@@ -367,12 +543,7 @@ void DSOClass::update(Graphics &graphics)
     SolidBrush BgBrush(Color(255,255,255,255));
     graphics.FillRectangle(&BgBrush, 0, 0, width, height);
 
-    //draw signal one by one, but we needs to figure out the groups and data ranges
-    //before the painting, better way is keep these information maintained rather than
-    //calculate them before each painting:
-    //   *group list is only created when new data name are met
-    //   *data range may keep changing when new data arrived
-    // these are all maintained by data_manager now;
+
 
     //coordinates information is fixed
     //time_x0 = 0; time_x1 = data_manager.record_time;
@@ -383,43 +554,48 @@ void DSOClass::update(Graphics &graphics)
     ::RECT client_rc;
     ::GetClientRect(this->hwnd, &client_rc);
 
-    int plot_cnt = data_manager.gname2ids.size();
+#define DIGITAL_SIGNAL_HEIGHT   28
+    int DynPlotCount = 0;
+    int DynHeightTotal = client_rc.bottom - client_rc.top - 20;
+    //iterate for height allocation
+    for (int i = 0; i < data_manager.group.size(); i++)
+    {
+        group_info &g = data_manager.group[i];
+        if (g.bIsDigital) DynHeightTotal -= DIGITAL_SIGNAL_HEIGHT * g.ids.size() + 2 * vmargin;
+        else DynPlotCount ++ ;
+    }
+
     int x0 = client_rc.left + hmargin;
     int width = client_rc.right - client_rc.left - 2 * hmargin;
-    int height = ((client_rc.bottom - client_rc.top - 20) / plot_cnt) - vmargin * 2;
-    int y = 0;
-    for (std::map<std::string, std::vector<int>>::reverse_iterator igname2id = data_manager.gname2ids.rbegin();
-        igname2id != data_manager.gname2ids.rend();
-        igname2id++)
+    int height = DynHeightTotal / DynPlotCount - 2 * vmargin;
+    int y = 10;
+    for (int i = 0; i < data_manager.group.size(); i++)
     {
-        std::vector<int> &ids = igname2id->second;
-
-        //get overall data range for group
-		bool bIsDigital = true;
-        float range_min = FLT_MAX;
-        float range_max = -FLT_MAX;
-        for (unsigned int j = 0; j < ids.size(); j++)
-        {
-            data_info &di = data_manager.data[ids[j]];
-            if (range_min > di.range_min) range_min = di.range_min;
-            if (range_max < di.range_max) range_max = di.range_max;
-			if(strstr(di.style, "d") == NULL) bIsDigital = false;
-        }
-        float range = range_max - range_min;
+        group_info &g = data_manager.group[i];
+        float range = g.range_max - g.range_min;
         float margin = range * 0.03f;
 
         //setup coordinate and draw
-		if(bIsDigital) push_coord(graphics, Rect(x0, y + vmargin, width, 32), time_x0, time_x1, -1.0f, 1.0f);
-		else	push_coord(graphics, Rect(x0, y + vmargin, width, height), time_x0, time_x1, range_min - margin, range_max + margin);
-		
-        for (unsigned int j = 0; j < ids.size(); j++)
+        if (g.bIsDigital)
         {
-            data_info &di = data_manager.data[ids[j]];
-            draw_curve(graphics, di);
+            push_coord(graphics, Rect(x0, y + vmargin, width, DIGITAL_SIGNAL_HEIGHT * g.ids.size()), time_x0, time_x1, 0, g.ids.size());//each signal take range of 1 
+            for (unsigned int j = 0; j < g.ids.size(); j++){
+                data_info &di = data_manager.data[g.ids[j]];
+                draw_digital(graphics, di, j);
+            }
+            pop_coord(graphics);
+            y += DIGITAL_SIGNAL_HEIGHT * g.ids.size() + 2 * vmargin;
         }
-        pop_coord(graphics);
-
-		y += bIsDigital ? (32 + 2 * vmargin):(height + 2 * vmargin);
+        else
+        {
+            push_coord(graphics, Rect(x0, y + vmargin, width, height), time_x0, time_x1, g.range_min - margin, g.range_max + margin);
+            for (unsigned int j = 0; j < g.ids.size(); j++){
+                data_info &di = data_manager.data[g.ids[j]];
+                draw_curve(graphics, di, j);
+            }
+            pop_coord(graphics);
+            y += height + 2 * vmargin;
+        }
     }
 
     LeaveCriticalSection(&critical_sec_data);
@@ -450,7 +626,55 @@ void DSOClass::display(HDC hdc)
             bDirty = true;
     }
 }
+float DSOClass::x2time(int xPos)
+{
+    RECT client_rc;
+    ::GetClientRect(hwnd, &client_rc);
 
+    int x0 = client_rc.left + hmargin;
+    int width = client_rc.right - client_rc.left - 2 * hmargin;
+
+    return time_x0 + (time_x1 - time_x0) * (xPos - x0) / width;
+}
+
+void DSOClass::magnify(int xPos, int zDelta)
+{
+    float time_center = x2time(xPos);
+    float time_0 = time_center - time_x0;
+    float time_1 = time_x1 - time_center;
+    float time_delta = 0.002f * zDelta;
+    float time_delta0 = time_delta * time_0 / (time_0 + time_1);
+    float time_delta1 = time_delta * time_1 / (time_0 + time_1);
+
+    time_x0 += time_delta0;
+    time_x1 -= time_delta1;
+    if (time_x0 < 0) time_x0 = 0;
+    if (time_x1 > data_manager.record_time) time_x1 = data_manager.record_time;
+
+
+    bDirty = true;
+    ::InvalidateRect(hwnd, NULL, FALSE);
+}
+void DSOClass::settime(float x_set)
+{
+    if (x_set < 0) x_set = 0;
+    float fdelta_time = x_set - time_x0;
+    if (time_x1 + fdelta_time > data_manager.record_time) fdelta_time = data_manager.record_time - time_x1;
+    
+    if (fdelta_time != 0)
+    {
+        time_x0 += fdelta_time;
+        time_x1 += fdelta_time;
+        bDirty = true;
+        ::InvalidateRect(hwnd, NULL, FALSE);
+    }
+}
+void DSOClass::setcursor(float x_set)
+{
+    time_cursor = x_set;
+    bDirty = true;
+    ::InvalidateRect(hwnd, NULL, FALSE);
+}
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam )
 {
@@ -458,40 +682,55 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
     PAINTSTRUCT ps;
     RECT rect;
 	short fwKeys, zDelta;
+    POINT pt;
+    
+    static float time_down;
 
 	//此处直接使用dso全局变量
     switch( message )
     {
     case WM_CREATE:
-        return 0;
+        break;
 
     case WM_PAINT:
         hdc = BeginPaint( hwnd, &ps ) ;
         dso.display(hdc);
         EndPaint( hwnd, &ps ) ;
-        return 0 ;
+        break;
 
     case WM_LBUTTONDOWN:
-        return 0;
+        pt.x = (short)LOWORD(lParam);
+        pt.y = (short)HIWORD(lParam);
+        //::ScreenToClient(hwnd, &pt);
+        time_down = dso.x2time(pt.x);
+        break;
+    case WM_MOUSEMOVE:
+        pt.x = (short)LOWORD(lParam);
+        pt.y = (short)HIWORD(lParam);
+        if (MK_LBUTTON & wParam)
+        {
+            //::ScreenToClient(hwnd, &pt);
+            dso.settime(dso.time_x0 + time_down - dso.x2time(pt.x));
+        }
+        if (MK_CONTROL & wParam)
+        {
+            dso.setcursor(dso.x2time(pt.x));
+        }
+        break;
 	case WM_MOUSEWHEEL:
-		fwKeys = GET_KEYSTATE_WPARAM(wParam);
+    	fwKeys = GET_KEYSTATE_WPARAM(wParam);
 		zDelta = GET_WHEEL_DELTA_WPARAM(wParam);
-
-		dso.time_x0 += 0.001f * zDelta;
-		dso.time_x1 -= 0.001f * zDelta;
-		if(dso.time_x0 < 0) dso.time_x0 = 0;
-		if(dso.time_x1 > dso.data_manager.record_time) dso.time_x1 = dso.data_manager.record_time;
-		dso.bDirty = true;
-		::InvalidateRect(hwnd, NULL, FALSE);
-
-		return 0;
+        pt.x = (short)LOWORD(lParam);
+        pt.y = (short)HIWORD(lParam);
+        ::ScreenToClient(hwnd, &pt);
+        dso.magnify(pt.x, zDelta);
+        break;
     case WM_DESTROY:
         PostQuitMessage( 0 ) ;
         return 0;
 
 	case WM_KEYDOWN:
-		if(VK_ESCAPE == wParam);
-        PostQuitMessage( 0 ) ;
+		if(VK_ESCAPE == wParam)PostQuitMessage( 0 ) ;
         return 0;
     case WM_SIZE:
         dso.bDirty = true;
@@ -523,13 +762,10 @@ unsigned __stdcall DSOClass::Main(void* param)
         return 0 ;
     }
 
-    pthis->hwnd = CreateWindow(szAppName, szAppName,//pthis->title,
-								WS_OVERLAPPEDWINDOW,       //窗口的风格
-								CW_USEDEFAULT,CW_USEDEFAULT,
-								pthis->width, pthis->height,
-								NULL,NULL,
-								hInstance,
-								NULL);
+    pthis->hwnd = CreateWindow(szAppName, szAppName, //pthis->title,
+								WS_OVERLAPPEDWINDOW, 
+								CW_USEDEFAULT,CW_USEDEFAULT, pthis->width, pthis->height,
+								NULL,NULL,hInstance,NULL);
 
     ShowWindow( pthis->hwnd, SW_SHOW ) ;
     UpdateWindow( pthis->hwnd ) ;
@@ -564,5 +800,9 @@ void emulDSO_record(const char * data_name, const char * style, float value)
 }
 void emulDSO_ticktock(float step_sec)
 {
-    dso.ticktock(step_sec);
+    dso.data_manager.ticktock(step_sec);
+}
+float emulDSO_curtick(void)
+{
+    return dso.data_manager.record_time;
 }
