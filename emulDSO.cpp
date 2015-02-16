@@ -171,9 +171,12 @@ struct DSOClass
 	HANDLE	        main_thread;
 	HWND	        hwnd;
     
+    ULONG_PTR       gdiplusToken;
     Bitmap         * pmemBitmap;
     CachedBitmap   * pcachedBitmap;
     bool            bDirty;
+
+    bool            bOpened;
 
     Font           * pfontAnnot;
     Font           * pfontDigital;
@@ -196,8 +199,9 @@ struct DSOClass
     }
     ///////////////////////////////////////////////////////////////////////////////
 
-    void create(const char * ptitle, int plot_width, int plot_height);
-	void close(void);
+    DSOClass(const char * ptitle, int plot_width, int plot_height);
+    ~DSOClass();
+    void close(bool bWait);
     void update(Graphics &graphics);
 	void display(HDC hdc);
 	
@@ -205,6 +209,7 @@ struct DSOClass
     float           time_x0;
     float           time_x1;
     float           time_cursor;
+    float           time_down;
 
 	vector<DSOCoordinate> coord;
 	
@@ -214,7 +219,7 @@ struct DSOClass
     void draw_digital(Graphics &graphics, data_info & di, int id);
 	void draw_curve(Graphics &graphics, data_info & di, int id);
 
-    void magnify(int x, int delta);
+    void magnify(float time_center, int delta);
     void settime(float x_set);
     float x2time(int xPos);
     void setcursor(float x_set);
@@ -223,10 +228,7 @@ struct DSOClass
 	static LRESULT CALLBACK WndProc( HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam );
 };
 
-static DSOClass dso;
-static ULONG_PTR  gdiplusToken;
-
-void DSOClass::create(const char * ptitle, int plot_width, int plot_height)
+DSOClass::DSOClass(const char * ptitle, int plot_width, int plot_height)
 {
     InitializeCriticalSection(&critical_sec_data);
 
@@ -253,17 +255,33 @@ void DSOClass::create(const char * ptitle, int plot_width, int plot_height)
 	main_thread = (HANDLE)_beginthreadex(NULL, 0, Main, this, 0, NULL);
 	scale_time = 1.0;
     data_manager.clear();
+
+    bOpened = true;
+}
+DSOClass::~DSOClass()
+{
+    close(true);
 }
 
-void DSOClass::close(void)
+void DSOClass::close(bool bWait)
 {
+    if (bWait) ::WaitForSingleObject(main_thread, INFINITE);
+
 	DWORD thid = ::GetThreadId(main_thread);
 	PostThreadMessage(thid, WM_QUIT,0,0);
+    
+    ::WaitForSingleObject(main_thread, INFINITE);
+
     delete pfontAnnot;
     delete pfontDigital;
     delete pfontTicksY;
     delete pfontTicksX;
 	Gdiplus::GdiplusShutdown(gdiplusToken);
+
+    DeleteCriticalSection(&critical_sec_data);
+
+    title = NULL;
+    bOpened = false;
 }
 
 /*
@@ -637,9 +655,8 @@ float DSOClass::x2time(int xPos)
     return time_x0 + (time_x1 - time_x0) * (xPos - x0) / width;
 }
 
-void DSOClass::magnify(int xPos, int zDelta)
+void DSOClass::magnify(float time_center, int zDelta)
 {
-    float time_center = x2time(xPos);
     float time_0 = time_center - time_x0;
     float time_1 = time_x1 - time_center;
     float time_delta = 0.002f * zDelta;
@@ -683,8 +700,7 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
     RECT rect;
 	short fwKeys, zDelta;
     POINT pt;
-    
-    static float time_down;
+    DSOClass * pdso = (DSOClass *)::GetWindowLong(hwnd, GWL_USERDATA);
 
 	//此处直接使用dso全局变量
     switch( message )
@@ -694,28 +710,20 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
 
     case WM_PAINT:
         hdc = BeginPaint( hwnd, &ps ) ;
-        dso.display(hdc);
+        pdso->display(hdc);
         EndPaint( hwnd, &ps ) ;
         break;
 
     case WM_LBUTTONDOWN:
         pt.x = (short)LOWORD(lParam);
         pt.y = (short)HIWORD(lParam);
-        //::ScreenToClient(hwnd, &pt);
-        time_down = dso.x2time(pt.x);
+        pdso->time_down = pdso->x2time(pt.x);
         break;
     case WM_MOUSEMOVE:
         pt.x = (short)LOWORD(lParam);
         pt.y = (short)HIWORD(lParam);
-        if (MK_LBUTTON & wParam)
-        {
-            //::ScreenToClient(hwnd, &pt);
-            dso.settime(dso.time_x0 + time_down - dso.x2time(pt.x));
-        }
-        if (MK_CONTROL & wParam)
-        {
-            dso.setcursor(dso.x2time(pt.x));
-        }
+        if (MK_LBUTTON & wParam)  pdso->settime(pdso->time_x0 + pdso->time_down - pdso->x2time(pt.x));
+        if (MK_CONTROL & wParam)  pdso->setcursor(pdso->x2time(pt.x));
         break;
 	case WM_MOUSEWHEEL:
     	fwKeys = GET_KEYSTATE_WPARAM(wParam);
@@ -723,7 +731,7 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
         pt.x = (short)LOWORD(lParam);
         pt.y = (short)HIWORD(lParam);
         ::ScreenToClient(hwnd, &pt);
-        dso.magnify(pt.x, zDelta);
+        pdso->magnify(pdso->x2time(pt.x), zDelta);
         break;
     case WM_DESTROY:
         PostQuitMessage( 0 ) ;
@@ -733,7 +741,7 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
 		if(VK_ESCAPE == wParam)PostQuitMessage( 0 ) ;
         return 0;
     case WM_SIZE:
-        dso.bDirty = true;
+        pdso->bDirty = true;
     }
     return DefWindowProc( hwnd, message, wParam, lParam ) ;
 }
@@ -766,6 +774,8 @@ unsigned __stdcall DSOClass::Main(void* param)
 								WS_OVERLAPPEDWINDOW, 
 								CW_USEDEFAULT,CW_USEDEFAULT, pthis->width, pthis->height,
 								NULL,NULL,hInstance,NULL);
+    
+    ::SetWindowLong(pthis->hwnd, GWL_USERDATA, (LONG)pthis);
 
     ShowWindow( pthis->hwnd, SW_SHOW ) ;
     UpdateWindow( pthis->hwnd ) ;
@@ -779,30 +789,30 @@ unsigned __stdcall DSOClass::Main(void* param)
 }
 
 //==========================================================================
-
+static DSOClass  * g_pDSO;
 void emulDSO_create(const char * title, int width, int height)
 {
-    dso.create(title, width, height);
+    g_pDSO = new DSOClass(title, width, height);
 }
 void emulDSO_close(int waitForUser)
 {
-    if (waitForUser)
+    if (g_pDSO)
     {
-        //let user control when to exit
-        ::WaitForSingleObject(dso.main_thread, INFINITE);
+        //g_pDSO->close(waitForUser);
+        delete g_pDSO;
+        g_pDSO = NULL;
     }
-    else
-        dso.close();
 }
 void emulDSO_record(const char * data_name, const char * style, float value)
 {
-    dso.record(data_name, style, value);
+    if (g_pDSO) g_pDSO->record(data_name, style, value);
 }
 void emulDSO_ticktock(float step_sec)
 {
-    dso.data_manager.ticktock(step_sec);
+    if (g_pDSO) g_pDSO->data_manager.ticktock(step_sec);
 }
 float emulDSO_curtick(void)
 {
-    return dso.data_manager.record_time;
+    if (g_pDSO) return g_pDSO->data_manager.record_time;
+    return 0;
 }
