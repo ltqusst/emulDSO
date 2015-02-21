@@ -310,31 +310,36 @@ void DSOClass::pop_coord(Graphics &graphics)
 	graphics.ResetClip();
 	if(coord.size() > 0) set_coord(graphics, coord.back(), false);
 }
-
+#define FATAL_ERROR(str) do{printf("Line %d: %s\r\n",__LINE__, str);_exit(0);}while(0)
 static int generate_ticks(float x0, float x1, int expect_tick_cnt, vector<float> &ticks)
 {
     ticks.clear();
+	if(expect_tick_cnt == 0) return 0;
+
     //ticks should be as close as possible to the interval of 10^N
     float expect_resolution = (x1 - x0) / expect_tick_cnt;
     float fN = log10f(expect_resolution);
-    int N = fN < 0 ? (int)(fN - 1) : (int)(fN);
-    float step = pow(10.0f, N);
+    int N = fN < 0 ? (int)(fN - 0.99f) : (int)(fN); //rounding to the lower bound
 
-    float tick_step;
+	float tick_step = pow(10.0f, N);
+	if(tick_step == 0) return 0;
 
-    if (step > expect_resolution) tick_step = step;
-    else if (2*step > expect_resolution) tick_step = 2*step;
-    else if (5 * step > expect_resolution) tick_step = 5*step;
-    else tick_step = 10 * step;
-	
-	if(tick_step > 0)
-	{
-		float x = (int)(x0 / tick_step) * tick_step;
-		for (; x < x1; x += tick_step)
-			if (x > x0) ticks.push_back(x);
+    if (tick_step >= expect_resolution) tick_step *= 1;
+    else if (2*tick_step >= expect_resolution) tick_step *= 2;
+    else if (5 * tick_step >= expect_resolution) tick_step *= 5;
+	else if (10 * tick_step >= expect_resolution) {
+		N ++;
+		tick_step *= 10;
 	}
+	else 
+		FATAL_ERROR("");
+	
+	float x = (int)(x0 / tick_step) * tick_step;
+	for (; x < x1; x += tick_step)
+		if (x > x0) ticks.push_back(x);
     return N;
 }
+
 void DSOClass::set_coord(Graphics &graphics, DSOCoordinate &cc, bool bDrawAxis)
 {
 	graphics.ResetTransform();
