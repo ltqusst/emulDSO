@@ -157,6 +157,7 @@ struct DSOCoordinate
 	Rect rc;
 	float x0, x1, y0, y1;
 	float scale_x, scale_y;
+	RectF clip_rc;
 };
 
 struct DSOClass
@@ -179,6 +180,7 @@ struct DSOClass
     bool            bOpened;
 
     Font           * pfontAnnot;
+	Font           * pfontAnnotVal;
     Font           * pfontDigital;
     Font           * pfontTicksY;
     Font           * pfontTicksX;
@@ -235,7 +237,7 @@ DSOClass::DSOClass(const char * ptitle, int plot_width, int plot_height)
     title = ptitle;
     width = plot_width;
     height = plot_height;
-    vmargin = 20;
+    vmargin = 10;
     hmargin = 80;
 
     time_cursor = 0;
@@ -247,7 +249,8 @@ DSOClass::DSOClass(const char * ptitle, int plot_width, int plot_height)
  	// Initialize GDI+.
 	GdiplusStartupInput  gdiplusStartupInput;
 	GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
-    pfontAnnot = new Font(L"Arial", 16, FontStyleItalic, UnitPixel);
+    pfontAnnot = new Font(L"Arial", 12, FontStyleItalic, UnitPixel);
+	pfontAnnotVal = new Font(L"Arial", 12, FontStyleRegular, UnitPixel);
     pfontDigital = new Font(L"Arial", 16, FontStyleBold, UnitPixel);
     pfontTicksY = new Font(L"Consolas", 14, FontStyleRegular, UnitPixel);
     pfontTicksX = new Font(L"Consolas", 12, FontStyleRegular, UnitPixel);
@@ -273,6 +276,7 @@ void DSOClass::close(bool bWait)
     ::WaitForSingleObject(main_thread, INFINITE);
 
     delete pfontAnnot;
+	delete pfontAnnotVal;
     delete pfontDigital;
     delete pfontTicksY;
     delete pfontTicksX;
@@ -300,12 +304,20 @@ void DSOClass::push_coord(Graphics &graphics, Rect &rc,
 	cc.x1 = x1;
 	cc.scale_y = -(float)rc.Height/(y1-y0);
 	cc.scale_x = (float)rc.Width/(x1-x0);
+	
+	//设置剪裁区域,这样数据曲线绘制时就无需考虑剪裁问题了
+	cc.clip_rc = RectF(cc.x0*cc.scale_x, cc.y1*cc.scale_y, (cc.x1-cc.x0)*cc.scale_x, -(cc.y1-cc.y0)*cc.scale_y);
+	
 	coord.push_back(cc);
 	set_coord(graphics, coord.back(), true);
 }
 void DSOClass::pop_coord(Graphics &graphics)
 {
-	if(coord.size() > 0) coord.pop_back();
+	if(coord.size() > 0) 
+	{
+		DSOCoordinate &cc = coord.back();
+		coord.pop_back();
+	}
 	graphics.ResetTransform();
 	graphics.ResetClip();
 	if(coord.size() > 0) set_coord(graphics, coord.back(), false);
@@ -352,19 +364,11 @@ void DSOClass::set_coord(Graphics &graphics, DSOCoordinate &cc, bool bDrawAxis)
 	graphics.TranslateTransform(cc.rc.X - cc.x0*cc.scale_x, cc.rc.Y - cc.y1*cc.scale_y);
 	graphics.ScaleTransform(1, 1);
 
-	//设置剪裁区域,这样数据曲线绘制时就无需考虑剪裁问题了
-	PointF polyPoints[] = {PointF(cc.x0*cc.scale_x, cc.y0*cc.scale_y), PointF(cc.x1*cc.scale_x, cc.y0*cc.scale_y), 
-						  PointF(cc.x1*cc.scale_x, cc.y1*cc.scale_y), PointF(cc.x0*cc.scale_x, cc.y1*cc.scale_y)};
-	GraphicsPath path;
-	path.AddPolygon(polyPoints, 4);
-	Region region(&path); // Construct a region based on the path.
 	if(bDrawAxis)
 	{
-		// Draw the outline of the region.
 		Pen pen(Color(255, 100, 100, 100), 1.0);
 		REAL dashValues[4] = {1, 1, 1, 1};
 		pen.SetDashPattern(dashValues, 4);
-		graphics.DrawPath(&pen, &path);
 
         //Draw the ticks(with number): 
         StringFormat stringformat;
@@ -409,8 +413,11 @@ void DSOClass::set_coord(Graphics &graphics, DSOCoordinate &cc, bool bDrawAxis)
             graphics.DrawString(strinfo, wcslen(strinfo), pfontTicksX, txtBox, &stringformat, &brush);
             graphics.DrawLine(&pen, PointF(ticks[i] * cc.scale_x, cc.y0*cc.scale_y), PointF(ticks[i] * cc.scale_x, cc.y0*cc.scale_y - 5));
         }
+
+		// Draw the outline of the region.
+		graphics.DrawRectangle(&pen, cc.clip_rc);
 	}
-	graphics.SetClip(&region);
+	
 }
 
 static const ARGB argb_table[] = {
@@ -434,6 +441,7 @@ void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
     while (i0 < di.data.size() && di.data[i0].time < cc.x0) i0++;
     if(i0 > 0) i0--;
 
+	graphics.SetClip(cc.clip_rc);
     float fCursorValue = di.data[i0].value;
     for (unsigned int i = 0; i <= di.data.size(); i++)
     {
@@ -457,31 +465,45 @@ void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
         }
         if (i<di.data.size() && di.data[i].time <= time_cursor) fCursorValue = di.data[i].value;
     }
-    
-    //draw data cursor
-    bool bDrawCursor = (time_cursor > cc.x0 && time_cursor < cc.x1);
-    if (bDrawCursor)
-    {
-        Pen penCursor(Color::Black, 1);
-        graphics.DrawLine(&penCursor, PointF(time_cursor*cc.scale_x, cc.y0*cc.scale_y), PointF(time_cursor*cc.scale_x, cc.y1*cc.scale_y));
-    }
+    graphics.ResetClip();
 
-    WCHAR strname[128];
-    if (bDrawCursor)
-    {
-        mbstowcs(strname, di.name, 128);
-        swprintf(strinfo, L"%s:%d", strname, (int)(fCursorValue));
-    }
-    else 
-        mbstowcs(strinfo, di.name, 128);
-    
+	SolidBrush AnnotBgBrush(Color(100, 255,255,255));
     RectF txtBox;
+	SolidBrush ValueBgBrush(Color::Gray);
+	SolidBrush ValueFgBrush(Color::White);
+
+    //draw data cursor
+	float time_cursor_lc = time_cursor;
+    bool bDrawCursor = (time_cursor_lc > cc.x0 && time_cursor_lc < cc.x1);
+    if (bDrawCursor && id == 0)
+    {
+		Pen penCursor(Color::Gray, 1);
+        graphics.DrawLine(&penCursor, PointF(time_cursor_lc*cc.scale_x, cc.y0*cc.scale_y), PointF(time_cursor_lc*cc.scale_x, cc.y1*cc.scale_y));
+
+		swprintf(strinfo, L" %.2f", time_cursor_lc);
+		graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnotVal, RectF(), &stringformat, &txtBox);
+		txtBox.X = time_cursor_lc * cc.scale_x - txtBox.Width/2;
+		txtBox.Y = cc.y0 * cc.scale_y;
+		graphics.FillRectangle(&ValueBgBrush, txtBox);
+		graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnotVal, txtBox, &stringformat, &ValueFgBrush);
+    }
+    
+    mbstowcs(strinfo, di.name, 128);
+    
     graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnot, RectF(), &stringformat, &txtBox);
     txtBox.X = cc.x1 * cc.scale_x - txtBox.Width;
     txtBox.Y = (cc.y0 + id + 1) * cc.scale_y;
-
-    //graphics.FillRectangle(&FgBrush, txtBox);
+	graphics.FillRectangle(&AnnotBgBrush, txtBox);
     graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnot, txtBox, &stringformat, &FgBrush);
+	
+    if (bDrawCursor)
+    {
+        swprintf(strinfo, L" %d", (int)(fCursorValue));
+		graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnotVal, RectF(), &stringformat, &txtBox);
+		txtBox.X = cc.x1 * cc.scale_x;
+		txtBox.Y = (cc.y0 + id + 1) * cc.scale_y;
+		graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnotVal, txtBox, &stringformat, &ValueBgBrush);
+    }
 }
 
 
@@ -490,8 +512,10 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
     DSOCoordinate &cc = coord.back();
 	REAL dashValues[4] = { 1, 1, 1, 1 };
     const char * pcfg;
-    Pen pen(Color::Green, 1);
+    
+	graphics.SetClip(cc.clip_rc);
 
+	Pen pen(Color::Green, 1);
 	pcfg = strstr(di.style, "c");    if (pcfg) pen.SetColor(Color(argb_table[pcfg[1] - '0']));
     pcfg = strstr(di.style, "w");    if (pcfg) pen.SetWidth(pcfg[1] - '0');
     pcfg = strstr(di.style, ".");    if (pcfg) pen.SetDashPattern(dashValues, 2);
@@ -522,39 +546,51 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
     }
     delete[]curvePoints;
 
-    //draw data cursor
-    bool bDrawCursor = (time_cursor_lc > cc.x0 && time_cursor_lc < cc.x1);
-    if (bDrawCursor && id == 0)
-    {
-        Pen penCursor(Color::Black, 1);
-        pen.SetDashPattern(dashValues, 2);
-        graphics.DrawLine(&penCursor, PointF(time_cursor_lc*cc.scale_x, cc.y0*cc.scale_y), PointF(time_cursor_lc*cc.scale_x, cc.y1*cc.scale_y));
-    }
+	graphics.ResetClip();
 
-    //draw annotation at upper right corner?
+	WCHAR strinfo[128];
+	RectF txtBox;
     StringFormat stringformat;
     stringformat.SetAlignment(StringAlignmentCenter);
     stringformat.SetLineAlignment(StringAlignmentCenter);
     SolidBrush AnnotBrush(color);
+	SolidBrush ValueBgBrush(Color::Gray);
+	SolidBrush ValueFgBrush(Color::White);
     SolidBrush AnnotBgBrush(Color(200, 255,255,255));
 
-    WCHAR strinfo[128];
-    WCHAR strname[128];
-    if (bDrawCursor)
+    //draw data cursor
+    bool bDrawCursor = (time_cursor_lc > cc.x0 && time_cursor_lc < cc.x1);
+    if (bDrawCursor && id == 0)
     {
-        mbstowcs(strname, di.name, 128);
-        swprintf(strinfo, L"%s:%.2f", strname, fCursorValue);
-    }
-    else
-        mbstowcs(strinfo, di.name, 128);
+		Pen penCursor(Color::Gray, 1);
+        pen.SetDashPattern(dashValues, 2);
+        graphics.DrawLine(&penCursor, PointF(time_cursor_lc*cc.scale_x, cc.y0*cc.scale_y), PointF(time_cursor_lc*cc.scale_x, cc.y1*cc.scale_y));
 
-    RectF txtBox;
+		swprintf(strinfo, L" %.2f", time_cursor_lc);
+		graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnotVal, RectF(), &stringformat, &txtBox);
+		txtBox.X = time_cursor_lc * cc.scale_x - txtBox.Width/2;
+		txtBox.Y = cc.y0 * cc.scale_y;
+		graphics.FillRectangle(&ValueBgBrush, txtBox);
+		graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnotVal, txtBox, &stringformat, &ValueFgBrush);
+    }
+
+    mbstowcs(strinfo, di.name, 128);
     graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnot, RectF(), &stringformat, &txtBox);
     txtBox.X = cc.x1 * cc.scale_x - txtBox.Width;
     txtBox.Y = cc.y1 * cc.scale_y + txtBox.Height * id;
     graphics.FillRectangle(&AnnotBgBrush, txtBox);
     graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnot, txtBox, &stringformat, &AnnotBrush);
-
+	
+    if (bDrawCursor)
+    {
+		stringformat.SetAlignment(StringAlignmentNear);
+        swprintf(strinfo, L" %.2f", fCursorValue);
+		graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnotVal, RectF(), &stringformat, &txtBox);
+		txtBox.X = cc.x1 * cc.scale_x;
+		txtBox.Y = cc.y1 * cc.scale_y + txtBox.Height * id;
+		//graphics.FillRectangle(&ValueBgBrush, txtBox);
+		graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnotVal, txtBox, &stringformat, &ValueBgBrush);
+    }
 }
 
 void DSOClass::update(Graphics &graphics)
@@ -638,7 +674,9 @@ void DSOClass::display(HDC hdc)
         width = rc.right - rc.left;
         height = rc.bottom - rc.top;
         pmemBitmap = new Bitmap(width, height, &graphics);
-        update(*Graphics::FromImage(pmemBitmap));
+		Graphics * pgraphics = Graphics::FromImage(pmemBitmap);
+        update(*pgraphics);
+		delete pgraphics;
         pcachedBitmap = new CachedBitmap(pmemBitmap, &graphics);
         bDirty = false;
     }
