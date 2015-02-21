@@ -1,3 +1,4 @@
+#include <tchar.h>
 #define USE_EMUL_DSO
 #include "emulDSO.h"
 #include <stdio.h>
@@ -38,8 +39,8 @@ struct data_info
 {
     int id;     //data id
     int gid;    //group id
-    const char * name;
-    const char * style;
+    TCHAR name[64];
+    TCHAR style[256];
     std::vector<data_entry> data;
     float range_min;
     float range_max;
@@ -51,14 +52,14 @@ struct group_info
     float range_max;
     std::vector<int> ids;   //data id of this group
 };
-static void get_group_name(const char * name, char * gname)
+static void get_group_name(const TCHAR * name, TCHAR * gname)
 {
-    const char * pdot = strrchr(name, '.');
+    const TCHAR * pdot = _tcsrchr(name, TEXT('.'));
     int cnt = strlen(name);
     if (pdot)
         cnt = pdot - name;
 
-    strncpy(gname, name, cnt);
+    _tcsncpy(gname, name, cnt);
     gname[cnt] = '\0';
 }
 //it is very danger to use pointer with STL, so we use vector & id reference as main storage mechanism
@@ -85,11 +86,11 @@ struct DataManager
         record_time = 0;
     }
 
-    void record(const char * data_name, const char * style, float value){
-        record(data_name, value, record_time, style);
+    void record(const TCHAR * data_name, const TCHAR * style, float value){
+        record(data_name, style, value, record_time);
     }
 
-    void record(const char * data_name, float value, float x, const char * style)
+    void record(const TCHAR * data_name, const TCHAR * style, float value, float x)
     {
         data_entry p;
         p.time = x;
@@ -104,8 +105,8 @@ struct DataManager
 
             pdi = &(data.back());
             pdi->id = data.size() - 1;
-            pdi->name = data_name;
-            pdi->style = style;
+            _tcscpy(pdi->name, data_name);
+            _tcscpy(pdi->style, style);
             pdi->range_min = value;
             pdi->range_max = value;
 
@@ -114,7 +115,7 @@ struct DataManager
 
             //new data name met(rarely), time to maintain groups
             //and add new data in a groups
-            char group_name[128];
+            TCHAR group_name[128];
             get_group_name(data_name, group_name);
             if (gname2ids.find(group_name) == gname2ids.end())
             {
@@ -133,7 +134,7 @@ struct DataManager
 
             pg = &(group[pdi->gid]);
             pg->ids.push_back(pdi->id);     //add this new data into group
-            if (pg->bIsDigital && (strstr(pdi->style, "d") == NULL)) pg->bIsDigital = false;
+            if (pg->bIsDigital && (_tcsstr(pdi->style, TEXT("d")) == NULL)) pg->bIsDigital = false;
         }
         else
         {
@@ -162,7 +163,7 @@ struct DSOCoordinate
 
 struct DSOClass
 {
-	const char *	title;
+	const TCHAR *	title;
 	int				width;
 	int				height;
 
@@ -189,19 +190,20 @@ struct DSOClass
     ///////////////////////////////////////////////////////////////////////////////
     //data recording interface 
     DataManager      data_manager;
-    void record(const char * data_name, const char * style, float value){
+    void record(const TCHAR * data_name, const TCHAR * style, float value){
         ::EnterCriticalSection(&critical_sec_data);
         data_manager.record(data_name, style, value);
         ::LeaveCriticalSection(&critical_sec_data);
-        bDirty = true;
-        ::InvalidateRect(hwnd, NULL, TRUE);
 
 		time_x0 = 0; 
 		time_x1 = data_manager.record_time;
+
+        bDirty = true;
+        ::InvalidateRect(hwnd, NULL, TRUE);
     }
     ///////////////////////////////////////////////////////////////////////////////
 
-    DSOClass(const char * ptitle, int plot_width, int plot_height);
+    DSOClass(const TCHAR * ptitle, int plot_width, int plot_height);
     ~DSOClass();
     void close(bool bWait);
     void update(Graphics &graphics);
@@ -230,7 +232,7 @@ struct DSOClass
 	static LRESULT CALLBACK WndProc( HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam );
 };
 
-DSOClass::DSOClass(const char * ptitle, int plot_width, int plot_height)
+DSOClass::DSOClass(const TCHAR * ptitle, int plot_width, int plot_height)
 {
     InitializeCriticalSection(&critical_sec_data);
 
@@ -322,7 +324,7 @@ void DSOClass::pop_coord(Graphics &graphics)
 	graphics.ResetClip();
 	if(coord.size() > 0) set_coord(graphics, coord.back(), false);
 }
-#define FATAL_ERROR(str) do{printf("Line %d: %s\r\n",__LINE__, str);_exit(0);}while(0)
+#define FATAL_ERROR(str) do{_tprintf(TEXT("Line %d: %s\r\n"),__LINE__, str);_exit(0);}while(0)
 static int generate_ticks(float x0, float x1, int expect_tick_cnt, vector<float> &ticks)
 {
     ticks.clear();
@@ -511,14 +513,14 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
 {
     DSOCoordinate &cc = coord.back();
 	REAL dashValues[4] = { 1, 1, 1, 1 };
-    const char * pcfg;
+    const TCHAR * pcfg;
     
 	graphics.SetClip(cc.clip_rc);
 
 	Pen pen(Color::Green, 1);
-	pcfg = strstr(di.style, "c");    if (pcfg) pen.SetColor(Color(argb_table[pcfg[1] - '0']));
-    pcfg = strstr(di.style, "w");    if (pcfg) pen.SetWidth(pcfg[1] - '0');
-    pcfg = strstr(di.style, ".");    if (pcfg) pen.SetDashPattern(dashValues, 2);
+	pcfg = _tcsstr(di.style, TEXT("c"));    if (pcfg) pen.SetColor(Color(argb_table[pcfg[1] - '0']));
+    pcfg = _tcsstr(di.style, TEXT("w"));    if (pcfg) pen.SetWidth(pcfg[1] - '0');
+    pcfg = _tcsstr(di.style, TEXT("."));    if (pcfg) pen.SetDashPattern(dashValues, 2);
     Color color(0x80, 0, 0);
     pen.GetColor(&color);
 
@@ -537,7 +539,7 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
     }
     
     graphics.DrawCurve(&pen, curvePoints, di.data.size());
-    if (strstr(di.style, "p"))
+    if (_tcsstr(di.style, TEXT("p")))
     {
         SolidBrush redBrush(color);
         int pw = pen.GetWidth();
@@ -599,12 +601,10 @@ void DSOClass::update(Graphics &graphics)
     //graphics.SetSmoothingMode(SmoothingModeHighQuality);
     graphics.SetSmoothingMode(SmoothingModeAntiAlias);
 
-    SolidBrush BgBrush(Color(255,255,255,255));
+	SolidBrush BgBrush(Color::White);
     graphics.FillRectangle(&BgBrush, 0, 0, width, height);
 
-
-
-    //coordinates information is fixed
+	//coordinates information is fixed
     //time_x0 = 0; time_x1 = data_manager.record_time;
     //time_x0 = 1.0; time_x1 = 2.5;// data_manager.record_time;
 
@@ -632,7 +632,7 @@ void DSOClass::update(Graphics &graphics)
     {
         group_info &g = data_manager.group[i];
         float range = g.range_max - g.range_min;
-        float margin = range * 0.03f;
+        float margin = range * 0.05f;
 
         //setup coordinate and draw
         if (g.bIsDigital)
@@ -745,18 +745,15 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
     POINT pt;
     DSOClass * pdso = (DSOClass *)::GetWindowLong(hwnd, GWL_USERDATA);
 
-	//此处直接使用dso全局变量
     switch( message )
     {
     case WM_CREATE:
         break;
-
     case WM_PAINT:
         hdc = BeginPaint( hwnd, &ps ) ;
         pdso->display(hdc);
         EndPaint( hwnd, &ps ) ;
         break;
-
     case WM_LBUTTONDOWN:
         pt.x = (short)LOWORD(lParam);
         pt.y = (short)HIWORD(lParam);
@@ -779,7 +776,6 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
     case WM_DESTROY:
         PostQuitMessage( 0 ) ;
         return 0;
-
 	case WM_KEYDOWN:
 		if(VK_ESCAPE == wParam)PostQuitMessage( 0 ) ;
         return 0;
@@ -809,11 +805,11 @@ unsigned __stdcall DSOClass::Main(void* param)
     wndclass.hCursor = LoadCursor( NULL, IDC_ARROW ) ;
 
 	if( !RegisterClass( &wndclass ) ){
-        MessageBox( NULL, TEXT("RegisterClass() failed!"), TEXT("error"), MB_OK | MB_ICONERROR ) ;
-        return 0 ;
+        //MessageBox( NULL, TEXT("RegisterClass() failed!"), TEXT("error"), MB_OK | MB_ICONERROR ) ;
+        //return 0 ;
     }
 
-    pthis->hwnd = CreateWindow(szAppName, szAppName, //pthis->title,
+    pthis->hwnd = CreateWindow(szAppName, pthis->title,
 								WS_OVERLAPPEDWINDOW, 
 								CW_USEDEFAULT,CW_USEDEFAULT, pthis->width, pthis->height,
 								NULL,NULL,hInstance,NULL);
@@ -832,30 +828,76 @@ unsigned __stdcall DSOClass::Main(void* param)
 }
 
 //==========================================================================
-static DSOClass  * g_pDSO;
-void emulDSO_create(const char * title, int width, int height)
+static std::vector<DSOClass *>			g_DSOs;
+static std::map<std::string, int>		g_DSOmap;
+
+static const TCHAR * cfg_title;
+static int cfg_width;
+static int cfg_height;
+void emulDSO_create(const TCHAR * title, int width, int height)
 {
-    g_pDSO = new DSOClass(title, width, height);
+	cfg_title = title;
+	cfg_width = width;
+	cfg_height = height;
+    //g_pDSO = new DSOClass(title, width, height);
 }
 void emulDSO_close(int waitForUser)
 {
-    if (g_pDSO)
-    {
-        //g_pDSO->close(waitForUser);
-        delete g_pDSO;
-        g_pDSO = NULL;
-    }
+	for(int i=0;i<g_DSOs.size(); i++)
+	{
+		DSOClass * pDSO = g_DSOs[i];
+		delete pDSO;
+	}
+	g_DSOs.clear();
+	g_DSOmap.clear();
 }
-void emulDSO_record(const char * data_name, const char * style, float value)
+void emulDSO_update(void)
 {
-    if (g_pDSO) g_pDSO->record(data_name, style, value);
+	for(int i=0;i<g_DSOs.size(); i++)
+	{
+		DSOClass * pDSO = g_DSOs[i];
+		pDSO->bDirty = true;
+		::InvalidateRect(pDSO->hwnd, NULL, false);
+	}
 }
-void emulDSO_ticktock(float step_sec)
+void emulDSO_record(const TCHAR * data_name, const TCHAR * style, float value)
 {
-    if (g_pDSO) g_pDSO->data_manager.ticktock(step_sec);
+	TCHAR inner_data_name[256];
+	const TCHAR * pdso_name = _tcsstr(data_name, "@");
+	if(pdso_name == NULL) 
+	{
+		pdso_name = TEXT("");
+		strcpy(inner_data_name, data_name);
+	}
+	else
+	{
+		int len = pdso_name - data_name;
+		_tcsncpy(inner_data_name, data_name, len);
+		inner_data_name[len] = 0;
+		pdso_name ++;//skip the '@'
+	}
+	
+	DSOClass * pDSO;
+	if(g_DSOmap.find(pdso_name) == g_DSOmap.end())
+	{
+		//create the DSO
+		pDSO = new DSOClass(pdso_name, cfg_width, cfg_height);
+		g_DSOs.push_back(pDSO);
+		g_DSOmap[pdso_name] = g_DSOs.size()-1;
+	}else pDSO = g_DSOs[g_DSOmap[pdso_name]];
+	
+	pDSO->record(inner_data_name, style, value);
 }
-float emulDSO_curtick(void)
+void emulDSO_ticktock(const TCHAR * dso_name, float step_sec)
 {
-    if (g_pDSO) return g_pDSO->data_manager.record_time;
-    return 0;
+	if(dso_name == NULL) dso_name = TEXT("");
+	if(g_DSOmap.find(dso_name) == g_DSOmap.end()) return;
+	DSOClass * pDSO = g_DSOs[g_DSOmap[dso_name]];
+	pDSO->data_manager.ticktock(step_sec);
+}
+float emulDSO_curtick(const TCHAR * dso_name)
+{
+	if(g_DSOmap.find(dso_name) == g_DSOmap.end()) return 0;
+	DSOClass * pDSO = g_DSOs[g_DSOmap[dso_name]];
+    return pDSO->data_manager.record_time;
 }
