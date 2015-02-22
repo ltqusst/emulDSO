@@ -10,7 +10,7 @@ int main()
 {
     int i = 0;
 	printf("Hello, emulDSO!\r\n");
-	emulDSO_create("test", 600, 400);
+	emulDSO_create("test", 600, 200);
 
     gs_sample s("flick_down.txt", GS_FORMAT_SSV_6T, 25, 100);// , 0, end_sec);
     while (s.scanf()) //skip 3 of every 3+1 sample

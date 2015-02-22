@@ -368,6 +368,10 @@ struct DSOClass
 	const TCHAR *	title;
 	int				width;
 	int				height;
+	
+	int				plot_height;
+	int				plot_totalHeight;
+	int				scroll_y;
 
     int             vmargin;
     int             hmargin;
@@ -409,7 +413,7 @@ struct DSOClass
     ~DSOClass();
     void close(bool bWait);
     void update(Graphics &graphics);
-	void display(HDC hdc);
+	void display(HDC hdc, PAINTSTRUCT *pps);
 	
     float			scale_time;
     float           time_x0;
@@ -434,13 +438,17 @@ struct DSOClass
 	static LRESULT CALLBACK WndProc( HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam );
 };
 
-DSOClass::DSOClass(const TCHAR * ptitle, int plot_width, int plot_height)
+DSOClass::DSOClass(const TCHAR * ptitle, int plot_width, int config_height)
 {
     InitializeCriticalSection(&critical_sec_data);
 
     title = ptitle;
-    width = plot_width;
-    height = plot_height;
+    height = width = plot_width;
+
+	plot_height = config_height;
+	plot_totalHeight = 0;
+	scroll_y = 0;
+
     vmargin = 10;
     hmargin = 80;
 
@@ -816,19 +824,10 @@ void DSOClass::update(Graphics &graphics)
     ::GetClientRect(this->hwnd, &client_rc);
 
 #define DIGITAL_SIGNAL_HEIGHT   28
-    int DynPlotCount = 0;
-    int DynHeightTotal = client_rc.bottom - client_rc.top - 20;
-    //iterate for height allocation
-    for (int i = 0; i < data_manager.group.size(); i++)
-    {
-        group_info &g = data_manager.group[i];
-        if (g.bIsDigital) DynHeightTotal -= DIGITAL_SIGNAL_HEIGHT * g.ids.size() + 2 * vmargin;
-        else DynPlotCount ++ ;
-    }
 
     int x0 = client_rc.left + hmargin;
     int width = client_rc.right - client_rc.left - 2 * hmargin;
-    int height = DynHeightTotal / DynPlotCount - 2 * vmargin;
+	int height = plot_height;
     int y = 10;
     for (int i = 0; i < data_manager.group.size(); i++)
     {
@@ -858,12 +857,21 @@ void DSOClass::update(Graphics &graphics)
             y += height + 2 * vmargin;
         }
     }
-
+	plot_totalHeight = y + 10;
     LeaveCriticalSection(&critical_sec_data);
+
+	SCROLLINFO sinfo;
+	sinfo.cbSize = sizeof(SCROLLINFO);
+	sinfo.nPage = (client_rc.bottom - client_rc.top);
+	sinfo.nMin =  0;
+	sinfo.nMax = plot_totalHeight;
+	sinfo.fMask = SIF_RANGE | SIF_PAGE;
+
+	SetScrollInfo(hwnd, SB_VERT, &sinfo, TRUE);
 }
 
 //use cached Bitmap to increase performance
-void DSOClass::display(HDC hdc)
+void DSOClass::display(HDC hdc, PAINTSTRUCT *pps)
 {
 	Graphics graphics(hdc);
 
@@ -875,6 +883,7 @@ void DSOClass::display(HDC hdc)
         ::GetClientRect(hwnd, &rc);
         width = rc.right - rc.left;
         height = rc.bottom - rc.top;
+		if(height < plot_totalHeight) height = plot_totalHeight;
         pmemBitmap = new Bitmap(width, height, &graphics);
 		Graphics * pgraphics = Graphics::FromImage(pmemBitmap);
         update(*pgraphics);
@@ -885,7 +894,7 @@ void DSOClass::display(HDC hdc)
 
     if (!bDirty)
     {
-        if (graphics.DrawCachedBitmap(pcachedBitmap, 0, 0) != Ok) 
+        if (graphics.DrawCachedBitmap(pcachedBitmap, 0, -scroll_y) != Ok) 
             bDirty = true;
     }
 }
@@ -946,6 +955,8 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
 	short fwKeys, zDelta;
     POINT pt;
     DSOClass * pdso = (DSOClass *)::GetWindowLong(hwnd, GWL_USERDATA);
+	SCROLLINFO si;
+	int yPos;
 
     switch( message )
     {
@@ -953,7 +964,7 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
         break;
     case WM_PAINT:
         hdc = BeginPaint( hwnd, &ps ) ;
-        pdso->display(hdc);
+		pdso->display(hdc, &ps);
         EndPaint( hwnd, &ps ) ;
         break;
     case WM_LBUTTONDOWN:
@@ -964,16 +975,79 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
     case WM_MOUSEMOVE:
         pt.x = (short)LOWORD(lParam);
         pt.y = (short)HIWORD(lParam);
-        if (MK_LBUTTON & wParam)  pdso->settime(pdso->time_x0 + pdso->time_down - pdso->x2time(pt.x));
+        if (MK_LBUTTON & wParam)
+		{
+			pdso->settime(pdso->time_x0 + pdso->time_down - pdso->x2time(pt.x));
+		}
         if (MK_CONTROL & wParam)  pdso->setcursor(pdso->x2time(pt.x));
         break;
+	case WM_VSCROLL:
+		// Get all the vertial scroll bar information.
+        si.cbSize = sizeof (si);
+        si.fMask  = SIF_ALL;
+        GetScrollInfo (hwnd, SB_VERT, &si);
+		// Save the position for comparison later on.
+        yPos = si.nPos;
+        switch (LOWORD (wParam))
+        {
+        case SB_TOP:// User clicked the HOME keyboard key.
+            si.nPos = si.nMin;
+            break;
+        case SB_BOTTOM:// User clicked the END keyboard key.
+            si.nPos = si.nMax;
+            break;
+        case SB_LINEUP:// User clicked the top arrow.
+            si.nPos -= 1;
+            break;
+        case SB_LINEDOWN:// User clicked the bottom arrow.
+            si.nPos += 1;
+            break;
+        case SB_PAGEUP:// User clicked the scroll bar shaft above the scroll box.
+            si.nPos -= si.nPage;
+            break;
+        case SB_PAGEDOWN:// User clicked the scroll bar shaft below the scroll box.
+            si.nPos += si.nPage;
+            break;
+        case SB_THUMBTRACK:// User dragged the scroll box.
+            si.nPos = si.nTrackPos;
+            break;
+        default:
+            break; 
+        }
+        // Set the position and then retrieve it.  Due to adjustments
+        // by Windows it may not be the same as the value set.
+        si.fMask = SIF_POS;
+        SetScrollInfo (hwnd, SB_VERT, &si, TRUE);
+        GetScrollInfo (hwnd, SB_VERT, &si);
+        // If the position has changed, scroll window and update it.
+        //if (si.nPos != yPos)
+        {
+			pdso->scroll_y = si.nPos;
+            //ScrollWindow(hwnd, 0, (yPos - si.nPos), NULL, NULL);
+            //UpdateWindow (hwnd);
+			::InvalidateRect(hwnd,NULL,false);
+        }
+        return 0;
+		break;
 	case WM_MOUSEWHEEL:
     	fwKeys = GET_KEYSTATE_WPARAM(wParam);
 		zDelta = GET_WHEEL_DELTA_WPARAM(wParam);
         pt.x = (short)LOWORD(lParam);
         pt.y = (short)HIWORD(lParam);
         ::ScreenToClient(hwnd, &pt);
-        pdso->magnify(pdso->x2time(pt.x), zDelta);
+		if (MK_CONTROL & wParam) 
+			pdso->magnify(pdso->x2time(pt.x), zDelta);
+		else
+		{
+			si.cbSize = sizeof (si);
+			si.fMask = SIF_POS;
+			GetScrollInfo (hwnd, SB_VERT, &si);
+			si.nPos -= zDelta/2;
+			SetScrollInfo (hwnd, SB_VERT, &si, TRUE);
+			GetScrollInfo (hwnd, SB_VERT, &si);
+			pdso->scroll_y = si.nPos;
+			::InvalidateRect(hwnd,NULL,false);
+		}
         break;
     case WM_DESTROY:
         PostQuitMessage( 0 ) ;
@@ -1012,7 +1086,7 @@ unsigned __stdcall DSOClass::Main(void* param)
     }
 
     pthis->hwnd = CreateWindow(szAppName, pthis->title,
-								WS_OVERLAPPEDWINDOW, 
+								WS_OVERLAPPEDWINDOW | WS_VSCROLL, 
 								CW_USEDEFAULT,CW_USEDEFAULT, pthis->width, pthis->height,
 								NULL,NULL,hInstance,NULL);
     
