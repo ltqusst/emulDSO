@@ -814,11 +814,6 @@ void DSOClass::update(Graphics &graphics)
 	SolidBrush BgBrush(Color::White);
     graphics.FillRectangle(&BgBrush, 0, 0, width, height);
 
-	//coordinates information is fixed
-    //time_x0 = 0; time_x1 = data_manager.record_time;
-    //time_x0 = 1.0; time_x1 = 2.5;// data_manager.record_time;
-
-    EnterCriticalSection(&critical_sec_data);
 
     ::RECT client_rc;
     ::GetClientRect(this->hwnd, &client_rc);
@@ -829,6 +824,7 @@ void DSOClass::update(Graphics &graphics)
     int width = client_rc.right - client_rc.left - 2 * hmargin;
 	int height = plot_height;
     int y = 10;
+	EnterCriticalSection(&critical_sec_data);
     for (int i = 0; i < data_manager.group.size(); i++)
     {
         group_info &g = data_manager.group[i];
@@ -857,8 +853,9 @@ void DSOClass::update(Graphics &graphics)
             y += height + 2 * vmargin;
         }
     }
+	LeaveCriticalSection(&critical_sec_data);
+
 	plot_totalHeight = y + 10;
-    LeaveCriticalSection(&critical_sec_data);
 
 	SCROLLINFO sinfo;
 	sinfo.cbSize = sizeof(SCROLLINFO);
@@ -894,6 +891,7 @@ void DSOClass::display(HDC hdc, PAINTSTRUCT *pps)
 
     if (!bDirty)
     {
+		//we draw whole graph on mem bitmap, and vertical scroll is done by scroll_y here
         if (graphics.DrawCachedBitmap(pcachedBitmap, 0, -scroll_y) != Ok) 
             bDirty = true;
     }
@@ -1020,12 +1018,14 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
         SetScrollInfo (hwnd, SB_VERT, &si, TRUE);
         GetScrollInfo (hwnd, SB_VERT, &si);
         // If the position has changed, scroll window and update it.
-        //if (si.nPos != yPos)
+        if (si.nPos != yPos)
         {
 			pdso->scroll_y = si.nPos;
+			::InvalidateRect(hwnd,NULL,false);
+			//we don't reply on following windows API to scroll client area
+
             //ScrollWindow(hwnd, 0, (yPos - si.nPos), NULL, NULL);
             //UpdateWindow (hwnd);
-			::InvalidateRect(hwnd,NULL,false);
         }
         return 0;
 		break;
