@@ -578,9 +578,9 @@ void DSOClass::set_coord(Graphics &graphics, DSOCoordinate &cc, bool bDrawAxis)
 
 	if(bDrawAxis)
 	{
-		Pen pen(Color(255, 100, 100, 100), 1.0);
-		REAL dashValues[4] = {1, 1, 1, 1};
-		pen.SetDashPattern(dashValues, 4);
+		Pen pen(Color::Black, 1.0);
+		REAL dashValues[4] = {1, 2, 1, 2};
+		//pen.SetDashPattern(dashValues, 4);
 
         //Draw the ticks(with number): 
         StringFormat stringformat;
