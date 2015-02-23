@@ -461,9 +461,9 @@ DSOClass::DSOClass(const TCHAR * ptitle, int plot_width, int config_height)
  	// Initialize GDI+.
 	GdiplusStartupInput  gdiplusStartupInput;
 	GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
-    pfontAnnot = new Font(L"Arial", 12, FontStyleItalic, UnitPixel);
-	pfontAnnotVal = new Font(L"Arial", 12, FontStyleRegular, UnitPixel);
-    pfontDigital = new Font(L"Arial", 16, FontStyleBold, UnitPixel);
+    pfontAnnot = new Font(L"Arial", 14, FontStyleItalic, UnitPixel);
+	pfontAnnotVal = new Font(L"Arial", 14, FontStyleRegular, UnitPixel);
+    pfontDigital = new Font(L"Arial", 12, FontStyleRegular, UnitPixel);
     pfontTicksY = new Font(L"Consolas", 14, FontStyleRegular, UnitPixel);
     pfontTicksX = new Font(L"Consolas", 12, FontStyleRegular, UnitPixel);
 
