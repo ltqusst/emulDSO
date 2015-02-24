@@ -23,206 +23,6 @@ using namespace Gdiplus;
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Frequency analyse support
-#define pi (3.14159265)
-struct complex
-{
-    float r;
-    float i;
-    complex():r(0), i(0){}
-    complex(float cr, float ci):r(cr), i(ci){}
-
-    complex get_MagPhase()                       {complex res; res.r = sqrt(r*r + i*i); res.i = atan2(i, r); return res;}
-    const complex operator+(const complex& p)    {complex res; res.r = r + p.r; res.i = i + p.i; return res;}
-    const complex operator-(const complex& p)    {complex res; res.r = r - p.r; res.i = i - p.i; return res;}
-    const complex operator*(const complex& p)    {complex res; res.r = r*p.r - i*p.i; res.i = r*p.i + i*p.r; return res;}
-};
-
-static int bit_rev(int bits, int cnt)
-{
-    int rev = 0;
-    for(int i=0;i<cnt;i++)
-    {
-        rev <<= 1;
-        rev |= (bits & 1);
-        bits >>=1;
-    }
-    return rev;
-}
-
-//there is a trick, since if (bit_rev(a)==b) then (bit_rev(b)==a)
-//we exchange a and b, and if:
-//      bit_rev(a) > a, we do the exchange;
-//      bit_rev(a) = a, we do nothing;
-//      bit_rev(a) < a, we already do the exchange before, because a is increasing, we already meet a_old = bit_rev(a);
-//PSH code is even better
-//      we have if bit_rev(a)==b,  then bit_rev(~a)==~b, ~a is bit-wise inverse of a
-static void bit_rev_permutation(complex * x, int exponent)
-{
-    int j, i;
-    complex temp;
-    int N = 1 << exponent;
-    int mask = N-1;
-    for(i=0;i<N;i++)
-    {
-        j = bit_rev(i, exponent);
-        if(j > i)
-        {
-            temp = x[i];
-            x[i] = x[j];
-            x[j] = temp;
-        }
-    }
-}
-/*
-    as said in wiki: http://en.wikipedia.org/wiki/Cooley%E2%80%93Tukey_FFT_algorithm
-    a single butterfly is like:
-    
-        X(k    ) = E(k) + exp(-2*pi*k*i/N)*O(k);
-        X(k+N/2) = E(k) - exp(-2*pi*k*i/N)*O(k);
-
-    for example: N = 8, k=0,1,2,3
-    input data sequence is (even and odd seperated):  E(0) E(1) E(2) E(3)  O(0) O(1) O(2) O(3)
-    output data sequence is                        :  X(0) X(1) X(2) X(3)  X(4) X(5) X(6) X(7)
-*/
-static void butterfly(complex * pX, int k, int Np2)
-{
-    complex *pEk = (pX + k);
-    complex *pOk = (pX + k + Np2);
-    float rad = -pi*k/Np2;
-    complex twiddle_factor(cos(rad), sin(rad));
-    complex temp = twiddle_factor * (*pOk);
-    (*pOk) = (*pEk) - temp;
-    (*pEk) = (*pEk) + temp;
-}
-void FFT(complex * x, int exponent)
-{
-    int N,j,k;
-    int N_max = 1 << exponent;
-
-	//bit reverse order permutation input so even and odd indexed data are seperated inplace
-    bit_rev_permutation(x, exponent);	
-
-	//FFT stage: controled by N, N is the group size of current stage
-    for(N=2; N <= N_max; N <<= 1)
-    {
-		//in a stage, all data are grouped into size N, 
-		//each group is composed of upper-half/lower-half,
-        //butterfly will transform a pair, one from upper-half, the other from lower-half
-        for(j=0; j<N_max; j += N)
-        {
-            //size-2*M DFT: 
-            //      built from size-M result by the butterfly
-            // k is the index of size-M result
-            for(k=0; k<(N>>1); k++)
-            {
-                butterfly(x + j, k, (N>>1));
-            }
-        }
-    }
-}
-
-//only difference between DFT/DTFT is:
-//	DFT is discrete both in time and frequency domain
-//	DTFT only discrete in time, in frequency domain it's continuous.
-//
-static void DFT_real(float * x, int N, complex * X)
-{
-    float norm = (1.0f/N);
-    for(int k=0;k<N;k++)
-    {
-        complex r;
-        for(int n=0;n<N;n++)
-        {
-            r.r += x[n] * cos(-2*pi*n*k/N);
-            r.i += x[n] * sin(-2*pi*n*k/N);
-        }
-        r.r *= norm;
-        r.i *= norm;
-        X[k] = r;
-    }
-}
-//there are only N points of samples, but we need resolution M(M>=N) Fourier transform
-//so it's like we zero-extend input to length M and do DFT.
-static void DTFT_real(float * x, int N, complex * X, int M)
-{
-    for(int k=0;k<M;k++)
-    {
-        complex r;
-        float omega = 2*pi*k/M;
-        for(int n=0;n<N;n++)
-        {
-            r.r += x[n] * cos(-omega*n);
-            r.i += x[n] * sin(-omega*n);
-        }
-        X[k] = r;
-    }
-}
-//DTFT can be implemented by DFT/FFT, simply expanding original signal with zero to fit required length
-void DTFT_real_byFFT(float * x, int N, complex * X, int exponent)
-{
-    int points = 1<<exponent;
-	//extend N points to (2^exponent) with zero
-    for(int k=0;k<points;k++) 
-    {
-        X[k].r = (k<N)? x[k]:0;
-        X[k].i = 0;
-    }
-    FFT(X, exponent);
-}
-
-/*
-LTI system characterized by Linear Constant-Coefficient Difference Equations
-        sum(ak*y[n-k]) = sum(bk*x[n-k])
-    or
-        y[n] = (1/a0)(sum(bk*x[n-k]) - sum_from1(ak*y[n-k]))
-
-the transffer function for z=exp(jw):
-    H(z) = (sum(bk*z^(-k)))/(sum(ak*z^(-k)))
-*/
-void Freqz(float * b, int bn, 
-           float * a, int an, 
-		   complex * X, int exponentN1)
-{
-    int points = 1<<exponentN1;
-
-	//N point real signal only have N/2 spectrum usefull(the other half is just a mirror)
-	//but since internal implementation is not specialized for real signal, so we need full N points calculation
-	//but only need to return first half of result.
-    complex * pB = new complex[2*points];
-    complex * pA = new complex[2*points];
-
-    //DTFT_real(b, bn, pB, 2*points, false);
-    //DTFT_real(a, an, pA, 2*points, false);
-    DTFT_real_byFFT(b, bn, pB, 1+exponentN1);
-    DTFT_real_byFFT(a, an, pA, 1+exponentN1);
-
-    for(int i=0;i<points;i++)
-    {
-        complex &numerator = pB[i];
-        complex &denominator = pA[i];
-        complex mp_num = numerator.get_MagPhase();
-        complex mp_den = denominator.get_MagPhase();
-        X[i].r = mp_num.r / mp_den.r;
-		X[i].i = mp_num.i - mp_den.i;
-
-		//phase is very unstable when magnitude of numerator is near zero.
-        if(fabs(numerator.r) < 1e-6 && fabs(numerator.i) < 1e-6)
-			X[i].i = i>0?X[i-1].i:0;
-
-		/*
-		//for debug Freqz
-        printf("%d: (%f,%f,%f,%f),(%f,%f,%f,%f)    (%f,%f)\n", i, 
-                numerator.r, numerator.i, mp_num.r, mp_num.i, 
-                denominator.r, denominator.i, mp_den.r, mp_den.i,
-                X[i].r, X[i].i);
-		*/
-    }
-
-    delete []pB;
-    delete []pA;
-}
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //#include "dataManager.hpp"
 
 struct data_entry
@@ -277,6 +77,11 @@ struct DataManager
     std::map<std::string, int>                  gname2ids;      //based on data, provide groupname key based reference
 
     float                                       record_time;
+
+	float										x_min;
+	float										x_max;
+	
+	DataManager(){x_min = FLT_MAX; x_max = -FLT_MAX;record_time = 0;}
     void ticktock(float time_step_sec) { record_time += time_step_sec; }
 
     void clear()
@@ -286,14 +91,15 @@ struct DataManager
         name2id.clear();
         gname2ids.clear();
         record_time = 0;
+		x_min = FLT_MAX; 
+		x_max = -FLT_MAX;
     }
 
-    void record(const TCHAR * data_name, const TCHAR * style, float value){
-        record(data_name, style, value, record_time);
-    }
-
-    void record(const TCHAR * data_name, const TCHAR * style, float value, float x)
+    void record(const TCHAR * data_name, const TCHAR * style, float x, float value)
     {
+		if(x_min > x) x_min = x;
+		if(x_max < x) x_max = x;
+
         data_entry p;
         p.time = x;
         p.value = value;
@@ -396,20 +202,25 @@ struct DSOClass
     ///////////////////////////////////////////////////////////////////////////////
     //data recording interface 
     DataManager      data_manager;
-    void record(const TCHAR * data_name, const TCHAR * style, float value){
+
+    void record(const TCHAR * data_name, const TCHAR * style, float x, float value){
         ::EnterCriticalSection(&critical_sec_data);
-        data_manager.record(data_name, style, value);
-        ::LeaveCriticalSection(&critical_sec_data);
+		if(x == FLT_MAX || x== -FLT_MAX) x = data_manager.record_time;
+        data_manager.record(data_name, style, x, value);
+		time_x0 = data_manager.x_min;
+		time_x1 = data_manager.x_max;
+        ::LeaveCriticalSection(&critical_sec_data);		
 
 		::SetEvent(hDirty);
         //::InvalidateRect(hwnd, NULL, FALSE);
     }
+
 	void ticktock(float time_step_sec) 
 	{
         ::EnterCriticalSection(&critical_sec_data);
         data_manager.ticktock(time_step_sec);
-		time_x0 = 0; 
-		time_x1 = data_manager.record_time;
+		time_x0 = data_manager.x_min;
+		time_x1 = data_manager.x_max;
 		::LeaveCriticalSection(&critical_sec_data);
 
 		::SetEvent(hDirty);
@@ -458,7 +269,8 @@ DSOClass::DSOClass(const TCHAR * ptitle, int plot_width, int config_height)
     vmargin = 10;
     hmargin = 80;
 
-    time_cursor = 0;
+    time_x0 = time_x1 = time_cursor = 0;
+
 log_x1 = -9876;
     pmemBitmap = NULL;
     pcachedBitmap = NULL;
@@ -656,7 +468,7 @@ void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
             FgBrush.SetColor(Color((~argb_table[cid]) | Color::AlphaMask));
             float w;
             if (i < di.data.size()) w = (di.data[i].time - di.data[i0].time) * cc.scale_x;
-            else w = (data_manager.record_time - di.data[i0].time) * cc.scale_x;
+			else w = (data_manager.x_max - di.data[i0].time) * cc.scale_x;
             RectF rc(di.data[i0].time * cc.scale_x, (cc.y0 + id + 1) * cc.scale_y, w, -1.0f * cc.scale_y);
             graphics.FillRectangle(&BgBrush, rc);
             swprintf(strinfo, L"%d", data);
@@ -675,7 +487,7 @@ void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
     //draw data cursor
 	float time_cursor_lc = time_cursor;
     bool bDrawCursor = (time_cursor_lc > cc.x0 && time_cursor_lc < cc.x1);
-    if (bDrawCursor && id == 0)
+    if (bDrawCursor)
     {
 		Pen penCursor(Color::Gray, 1);
         graphics.DrawLine(&penCursor, PointF(time_cursor_lc*cc.scale_x, cc.y0*cc.scale_y), PointF(time_cursor_lc*cc.scale_x, cc.y1*cc.scale_y));
@@ -905,17 +717,17 @@ void DSOClass::magnify(float time_center, int zDelta)
 
     time_x0 += time_delta0;
     time_x1 -= time_delta1;
-    if (time_x0 < 0) time_x0 = 0;
-    if (time_x1 > data_manager.record_time) time_x1 = data_manager.record_time;
+	if (time_x0 < data_manager.x_min) time_x0 = data_manager.x_min;
+	if (time_x1 > data_manager.x_max) time_x1 = data_manager.x_max;
 
 	::SetEvent(hDirty);
     ::InvalidateRect(hwnd, NULL, FALSE);
 }
 void DSOClass::settime(float x_set)
 {
-    if (x_set < 0) x_set = 0;
+	if (x_set < data_manager.x_min) x_set = data_manager.x_min;
     float fdelta_time = x_set - time_x0;
-    if (time_x1 + fdelta_time > data_manager.record_time) fdelta_time = data_manager.record_time - time_x1;
+	if (time_x1 + fdelta_time > data_manager.x_max) fdelta_time = data_manager.x_max - time_x1;
     
     if (fdelta_time != 0)
     {
@@ -942,6 +754,7 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
     DSOClass * pdso = (DSOClass *)::GetWindowLong(hwnd, GWL_USERDATA);
 	SCROLLINFO si;
 	int yPos;
+	float ftime;
 
     switch( message )
     {
@@ -1022,8 +835,11 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
         pt.x = (short)LOWORD(lParam);
         pt.y = (short)HIWORD(lParam);
         ::ScreenToClient(hwnd, &pt);
-		if (MK_CONTROL & wParam) 
-			pdso->magnify(pdso->x2time(pt.x), zDelta);
+		
+		ftime = pdso->x2time(pt.x);
+		//if mouse is on graph, do time scaling
+		if (ftime > pdso->time_x0 && ftime < pdso->time_x1)//(MK_CONTROL & wParam) 
+			pdso->magnify(ftime, zDelta);
 		else
 		{
 			si.cbSize = sizeof (si);
@@ -1035,6 +851,11 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
 			pdso->scroll_y = si.nPos;
 			::InvalidateRect(hwnd,NULL,false);
 		}
+        break;
+    case WM_RBUTTONDOWN:
+        pt.x = (short)LOWORD(lParam);
+        pt.y = (short)HIWORD(lParam);
+        pdso->magnify(pdso->x2time(pt.x), 0x80000000);
         break;
     case WM_DESTROY:
         PostQuitMessage( 0 ) ;
@@ -1111,7 +932,7 @@ void emulDSO_create(const TCHAR * title, int width, int height)
 }
 void emulDSO_close(int waitForUser)
 {
-	emulDSO_update();
+	emulDSO_update(NULL);
 	for(int i=0;i<g_DSOs.size(); i++)
 	{
 		DSOClass * pDSO = g_DSOs[i];
@@ -1120,17 +941,19 @@ void emulDSO_close(int waitForUser)
 	g_DSOs.clear();
 	g_DSOmap.clear();
 }
-void emulDSO_update(void)
+void emulDSO_update(const TCHAR *dso_name)
 {
 	for(int i=0;i<g_DSOs.size(); i++)
 	{
 		DSOClass * pDSO = g_DSOs[i];
+		//only update specified dso
+		if((dso_name != NULL) && (_tcscmp(dso_name, pDSO->title)!=0)) continue;
 		::SetEvent(pDSO->hDirty);
 		::InvalidateRect(pDSO->hwnd, NULL, FALSE);
 		::UpdateWindow(pDSO->hwnd);
 	}
 }
-void emulDSO_record(const TCHAR * data_name, const TCHAR * style, float value)
+void emulDSO_record2(const char * data_name, const char * style, float x, float value)
 {
 	TCHAR inner_data_name[256];
 	const TCHAR * pdso_name = _tcsstr(data_name, "@");
@@ -1156,8 +979,13 @@ void emulDSO_record(const TCHAR * data_name, const TCHAR * style, float value)
 		g_DSOmap[pdso_name] = g_DSOs.size()-1;
 	}else pDSO = g_DSOs[g_DSOmap[pdso_name]];
 	
-	pDSO->record(inner_data_name, style, value);
+	pDSO->record(inner_data_name, style, x, value);
 }
+void emulDSO_record(const TCHAR * data_name, const TCHAR * style, float value)
+{
+	emulDSO_record2(data_name, style, FLT_MAX, value);//FLT_MAX means using default internal timer
+}
+
 void emulDSO_ticktock(const TCHAR * dso_name, float step_sec)
 {
 	if(dso_name == NULL) dso_name = TEXT("");
@@ -1170,4 +998,227 @@ float emulDSO_curtick(const TCHAR * dso_name)
 	if(g_DSOmap.find(dso_name) == g_DSOmap.end()) return 0;
 	DSOClass * pDSO = g_DSOs[g_DSOmap[dso_name]];
     return pDSO->data_manager.record_time;
+}
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Frequency analyse support
+#define pi (3.14159265)
+struct complex
+{
+    float r;
+    float i;
+    complex():r(0), i(0){}
+    complex(float cr, float ci):r(cr), i(ci){}
+
+    complex get_MagPhase()                       {complex res; res.r = sqrt(r*r + i*i); res.i = atan2(i, r); return res;}
+    const complex operator+(const complex& p)    {complex res; res.r = r + p.r; res.i = i + p.i; return res;}
+    const complex operator-(const complex& p)    {complex res; res.r = r - p.r; res.i = i - p.i; return res;}
+    const complex operator*(const complex& p)    {complex res; res.r = r*p.r - i*p.i; res.i = r*p.i + i*p.r; return res;}
+};
+
+static int bit_rev(int bits, int cnt)
+{
+    int rev = 0;
+    for(int i=0;i<cnt;i++)
+    {
+        rev <<= 1;
+        rev |= (bits & 1);
+        bits >>=1;
+    }
+    return rev;
+}
+
+//there is a trick, since if (bit_rev(a)==b) then (bit_rev(b)==a)
+//we exchange a and b, and if:
+//      bit_rev(a) > a, we do the exchange;
+//      bit_rev(a) = a, we do nothing;
+//      bit_rev(a) < a, we already do the exchange before, because a is increasing, we already meet a_old = bit_rev(a);
+//PSH code is even better
+//      we have if bit_rev(a)==b,  then bit_rev(~a)==~b, ~a is bit-wise inverse of a
+static void bit_rev_permutation(complex * x, int exponent)
+{
+    int j, i;
+    complex temp;
+    int N = 1 << exponent;
+    int mask = N-1;
+    for(i=0;i<N;i++)
+    {
+        j = bit_rev(i, exponent);
+        if(j > i)
+        {
+            temp = x[i];
+            x[i] = x[j];
+            x[j] = temp;
+        }
+    }
+}
+/*
+    as said in wiki: http://en.wikipedia.org/wiki/Cooley%E2%80%93Tukey_FFT_algorithm
+    a single butterfly is like:
+    
+        X(k    ) = E(k) + exp(-2*pi*k*i/N)*O(k);
+        X(k+N/2) = E(k) - exp(-2*pi*k*i/N)*O(k);
+
+    for example: N = 8, k=0,1,2,3
+    input data sequence is (even and odd seperated):  E(0) E(1) E(2) E(3)  O(0) O(1) O(2) O(3)
+    output data sequence is                        :  X(0) X(1) X(2) X(3)  X(4) X(5) X(6) X(7)
+*/
+static void butterfly(complex * pX, int k, int Np2)
+{
+    complex *pEk = (pX + k);
+    complex *pOk = (pX + k + Np2);
+    float rad = -pi*k/Np2;
+    complex twiddle_factor(cos(rad), sin(rad));
+    complex temp = twiddle_factor * (*pOk);
+    (*pOk) = (*pEk) - temp;
+    (*pEk) = (*pEk) + temp;
+}
+void FFT(complex * x, int exponent)
+{
+    int N,j,k;
+    int N_max = 1 << exponent;
+
+	//bit reverse order permutation input so even and odd indexed data are seperated inplace
+    bit_rev_permutation(x, exponent);	
+
+	//FFT stage: controled by N, N is the group size of current stage
+    for(N=2; N <= N_max; N <<= 1)
+    {
+		//in a stage, all data are grouped into size N, 
+		//each group is composed of upper-half/lower-half,
+        //butterfly will transform a pair, one from upper-half, the other from lower-half
+        for(j=0; j<N_max; j += N)
+        {
+            //size-2*M DFT: 
+            //      built from size-M result by the butterfly
+            // k is the index of size-M result
+            for(k=0; k<(N>>1); k++)
+            {
+                butterfly(x + j, k, (N>>1));
+            }
+        }
+    }
+}
+
+//only difference between DFT/DTFT is:
+//	DFT is discrete both in time and frequency domain
+//	DTFT only discrete in time, in frequency domain it's continuous.
+//
+static void DFT_real(float * x, int N, complex * X)
+{
+    float norm = (1.0f/N);
+    for(int k=0;k<N;k++)
+    {
+        complex r;
+        for(int n=0;n<N;n++)
+        {
+            r.r += x[n] * cos(-2*pi*n*k/N);
+            r.i += x[n] * sin(-2*pi*n*k/N);
+        }
+        r.r *= norm;
+        r.i *= norm;
+        X[k] = r;
+    }
+}
+//there are only N points of samples, but we need resolution M(M>=N) Fourier transform
+//so it's like we zero-extend input to length M and do DFT.
+static void DTFT_real(float * x, int N, complex * X, int M)
+{
+    for(int k=0;k<M;k++)
+    {
+        complex r;
+        float omega = 2*pi*k/M;
+        for(int n=0;n<N;n++)
+        {
+            r.r += x[n] * cos(-omega*n);
+            r.i += x[n] * sin(-omega*n);
+        }
+        X[k] = r;
+    }
+}
+//DTFT can be implemented by DFT/FFT, simply expanding original signal with zero to fit required length
+void DTFT_real_byFFT(float * x, int N, complex * X, int exponent)
+{
+    int points = 1<<exponent;
+	//extend N points to (2^exponent) with zero
+    for(int k=0;k<points;k++) 
+    {
+        X[k].r = (k<N)? x[k]:0;
+        X[k].i = 0;
+    }
+    FFT(X, exponent);
+}
+
+/*
+LTI system characterized by Linear Constant-Coefficient Difference Equations
+        sum(ak*y[n-k]) = sum(bk*x[n-k])
+    or
+        y[n] = (1/a0)(sum(bk*x[n-k]) - sum_from1(ak*y[n-k]))
+
+the transffer function for z=exp(jw):
+    H(z) = (sum(bk*z^(-k)))/(sum(ak*z^(-k)))
+*/
+void Freqz(float * b, int bn, 
+           float * a, int an, 
+		   complex * X, int exponentN1)
+{
+    int points = 1<<exponentN1;
+
+	//N point real signal only have N/2 spectrum usefull(the other half is just a mirror)
+	//but since internal implementation is not specialized for real signal, so we need full N points calculation
+	//but only need to return first half of result.
+    complex * pB = new complex[2*points];
+    complex * pA = new complex[2*points];
+
+    //DTFT_real(b, bn, pB, 2*points, false);
+    //DTFT_real(a, an, pA, 2*points, false);
+    DTFT_real_byFFT(b, bn, pB, 1+exponentN1);
+    DTFT_real_byFFT(a, an, pA, 1+exponentN1);
+
+    for(int i=0;i<points;i++)
+    {
+        complex &numerator = pB[i];
+        complex &denominator = pA[i];
+        complex mp_num = numerator.get_MagPhase();
+        complex mp_den = denominator.get_MagPhase();
+        X[i].r = mp_num.r / mp_den.r;
+		X[i].i = mp_num.i - mp_den.i;
+
+		//phase is very unstable when magnitude of numerator is near zero.
+        if(fabs(numerator.r) < 1e-6 && fabs(numerator.i) < 1e-6)
+			X[i].i = i>0?X[i-1].i:0;
+
+		/*
+		//for debug Freqz
+        printf("%d: (%f,%f,%f,%f),(%f,%f,%f,%f)    (%f,%f)\n", i, 
+                numerator.r, numerator.i, mp_num.r, mp_num.i, 
+                denominator.r, denominator.i, mp_den.r, mp_den.i,
+                X[i].r, X[i].i);
+		*/
+    }
+
+    delete []pB;
+    delete []pA;
+}
+void emulDSO_freqz(const TCHAR * dso_name, float * b, int bn, float * a, int an, int exponentN1)
+{
+	int points = 1<<exponentN1;
+	complex * X = new complex[points];
+	Freqz(b,bn,a,an, X, exponentN1);
+
+	TCHAR mag_name[256];
+	TCHAR phase_name[256];
+	_stprintf(mag_name, TEXT("magnitude@%s"), dso_name);
+	_stprintf(phase_name, TEXT("phase@%s"), dso_name);
+	
+	float fstep = 0.5f/points;
+	for(int i=0;i<points;i++)
+	{
+		emulDSO_record2(mag_name, TEXT("c0"), i*fstep, X[i].r);
+		emulDSO_record2(phase_name, TEXT("c2"), i*fstep, X[i].i * 180/(3.14159265f));
+	}
+	emulDSO_update(dso_name);
 }

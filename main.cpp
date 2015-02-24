@@ -41,8 +41,15 @@ int main()
         emulDSO_ticktock("t0",1.0f / 25);
 		emulDSO_ticktock("t1",1.0f / 25);
     }
-	emulDSO_update();
-	Sleep(1000*2);
+	//emulDSO_update();
+	//Sleep(100);
+
+	float fb[]={0.25,0.25,0.25,0.25};
+	float fa[]={1};
+	emulDSO_freqz("filter1",
+				   fb, sizeof(fb)/sizeof(fb[0]), 
+			       fa, sizeof(fa)/sizeof(fa[0]), 9);
+
     printf("wait for DSO to exit\n");
 
 	emulDSO_close(1);
