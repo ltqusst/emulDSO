@@ -46,6 +46,15 @@ struct data_info
     std::vector<data_entry> data;
     float range_min;
     float range_max;
+
+	void data_id_range(float x0, float x1, int &id0, int &id1)
+	{
+		for(id0=0;id0<data.size();id0++) if(data[id0].time >= x0) break;
+		if(id0 > 0) id0 --;
+
+		for(id1=data.size()-1;id1>=id0;id1--) if(data[id1].time <= x1) break;
+		if(id1 < data.size()-1) id1 ++;
+	}
 };
 struct group_info
 {
@@ -449,13 +458,13 @@ void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
     Color c(argb_table[0]);
     SolidBrush BgBrush(c);
     SolidBrush FgBrush(c);
-    unsigned int i0 = 0;
-    while (i0 < di.data.size() && di.data[i0].time < cc.x0) i0++;
-    if(i0 > 0) i0--;
 
+	int i0,i1;
+	di.data_id_range(time_x0, time_x1, i0,i1);
+	
 	graphics.SetClip(cc.clip_rc);
     float fCursorValue = di.data[i0].value;
-    for (unsigned int i = 0; i <= di.data.size(); i++)
+    for (unsigned int i = i0; i <= i1 + 1; i++)
     {
         if ((i == di.data.size()) ||
             (i > 0 && di.data[i].value != di.data[i - 1].value) ||
@@ -534,25 +543,28 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
     pen.GetColor(&color);
 
     float time_cursor_lc = -999990;
-    
-    PointF * curvePoints = new PointF[di.data.size()];
+	int i0,i1,cnt;
+	di.data_id_range(time_x0, time_x1, i0,i1);
+	cnt = i1-i0+1;
+
+    PointF * curvePoints = new PointF[cnt];
     float fCursorValue = 0;
-    for (unsigned int i = 0; i < di.data.size(); i++)
+    for (unsigned int i = 0; i < cnt; i++)
     {
-        curvePoints[i].X = di.data[i].time * cc.scale_x;
-        curvePoints[i].Y = di.data[i].value * cc.scale_y;
-        if (di.data[i].time <= time_cursor){
-            time_cursor_lc = di.data[i].time;
-            fCursorValue = di.data[i].value;
+        curvePoints[i].X = di.data[i+i0].time * cc.scale_x;
+        curvePoints[i].Y = di.data[i+i0].value * cc.scale_y;
+        if (di.data[i+i0].time <= time_cursor){
+            time_cursor_lc = di.data[i+i0].time;
+            fCursorValue = di.data[i+i0].value;
         }
     }
     
-    graphics.DrawCurve(&pen, curvePoints, di.data.size());
+    graphics.DrawCurve(&pen, curvePoints, cnt);
     if (_tcsstr(di.style, TEXT("p")))
     {
         SolidBrush redBrush(color);
         int pw = pen.GetWidth();
-        for (unsigned int i = 0; i < di.data.size(); i++)
+        for (int i = 0; i < cnt; i++)
             graphics.FillRectangle(&redBrush, Rect(curvePoints[i].X - pw, curvePoints[i].Y - pw, pw * 2 + 1, pw * 2 + 1));
     }
     delete[]curvePoints;
@@ -715,13 +727,16 @@ void DSOClass::magnify(float time_center, int zDelta)
     float time_delta0 = time_delta * time_0 / (time_0 + time_1);
     float time_delta1 = time_delta * time_1 / (time_0 + time_1);
 
-    time_x0 += time_delta0;
-    time_x1 -= time_delta1;
-	if (time_x0 < data_manager.x_min) time_x0 = data_manager.x_min;
-	if (time_x1 > data_manager.x_max) time_x1 = data_manager.x_max;
+	if (time_x1-time_delta1 > time_x0+time_delta0)
+	{
+		time_x0 += time_delta0;
+		time_x1 -= time_delta1;
+		if (time_x0 < data_manager.x_min) time_x0 = data_manager.x_min;
+		if (time_x1 > data_manager.x_max) time_x1 = data_manager.x_max;
 
-	::SetEvent(hDirty);
-    ::InvalidateRect(hwnd, NULL, FALSE);
+		::SetEvent(hDirty);
+		::InvalidateRect(hwnd, NULL, FALSE);
+	}
 }
 void DSOClass::settime(float x_set)
 {
