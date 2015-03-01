@@ -49,11 +49,16 @@ int main()
 	//Sleep(100);
 
 	//freqz of an IIR filter
-	float fb[]={0.25,0.25,0.25,0.25};
-	float fa[]={1};
+	//float fb[]={0.25,0.25,0.25,0.25};
+	//float fa[]={1};
+
+	float fb[]={0.008, -0.033, 0.05, -0.033, 0.008};
+	float fa[]={1, 2.37, 2.7, 1.6, 0.41};
+	//float fb[]={0.98};
+	//float fa[]={1,-0.98};
 	emulDSO_freqz("filter1",
 				   fb, sizeof(fb)/sizeof(fb[0]), 
-			       fa, sizeof(fa)/sizeof(fa[0]), 5);
+			       fa, sizeof(fa)/sizeof(fa[0]), 9, 0);
 	
     printf("wait for DSO to exit\n");
 

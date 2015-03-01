@@ -1187,7 +1187,7 @@ void Freqz(float * b, int bn,
 		   complex * X, int exponentN1)
 {
     int points = 1<<exponentN1;
-
+	float rad_off = 0;
 	//N point real signal only have N/2 spectrum usefull(the other half is just a mirror)
 	//but since internal implementation is not specialized for real signal, so we need full N points calculation
 	//but only need to return first half of result.
@@ -1212,6 +1212,14 @@ void Freqz(float * b, int bn,
         if(fabs(numerator.r) < 1e-6 && fabs(numerator.i) < 1e-6)
 			X[i].i = i>0?X[i-1].i:0;
 
+		//handle phase wrapping
+		if(i > 0)
+		{
+			float step = (X[i].i - X[i-1].i);
+			if(step >= pi)
+				rad_off = step > 0? -2*pi:2*pi;
+		}
+		X[i].i += rad_off;
 		/*
 		//for debug Freqz
         printf("%d: (%f,%f,%f,%f),(%f,%f,%f,%f)    (%f,%f)\n", i, 
@@ -1224,7 +1232,7 @@ void Freqz(float * b, int bn,
     delete []pB;
     delete []pA;
 }
-void emulDSO_freqz(const TCHAR * dso_name, float * b, int bn, float * a, int an, int exponentN1)
+void emulDSO_freqz(const TCHAR * dso_name, float * b, int bn, float * a, int an, int exponentN1, int use_dB)
 {
 	int points = 1<<exponentN1;
 	complex * X = new complex[points];
@@ -1232,14 +1240,26 @@ void emulDSO_freqz(const TCHAR * dso_name, float * b, int bn, float * a, int an,
 
 	TCHAR mag_name[256];
 	TCHAR phase_name[256];
-    _stprintf(mag_name, _TEXT("magnitude@%s"), dso_name);
-    _stprintf(phase_name, _TEXT("phase@%s"), dso_name);
+	_stprintf(mag_name, use_dB?_TEXT("magnitude(dB)@%s"):_TEXT("magnitude@%s"), dso_name);
+    _stprintf(phase_name, _TEXT("phase(degree)@%s"), dso_name);
 	
 	float fstep = 0.5f/points;
 	for(int i=0;i<points;i++)
 	{
-        emulDSO_record2(mag_name, _TEXT("c0"), i*fstep, X[i].r);
-        emulDSO_record2(phase_name, _TEXT("c2"), i*fstep, X[i].i * 180 / (3.14159265f));
+		float r = X[i].r;
+		if(use_dB)
+		{
+			if(r > 0)
+			{
+				emulDSO_record2(mag_name, _TEXT("c0"), i*fstep, 20*log10(r));
+				emulDSO_record2(phase_name, _TEXT("c2"), i*fstep, X[i].i * 180 / (3.14159265f));
+			}
+		}
+		else
+		{
+			emulDSO_record2(mag_name, _TEXT("c0"), i*fstep, r);
+			emulDSO_record2(phase_name, _TEXT("c2"), i*fstep, X[i].i * 180 / (3.14159265f));
+		}
 	}
 	emulDSO_update(dso_name);
 }

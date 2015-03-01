@@ -29,7 +29,7 @@ void emulDSO_record2(const TCHAR * data_name, const TCHAR * style, float x, floa
 
 //feature2
 //a freqz method similar to matlab version, internally based on FFT-based DTFT and feature1
-void emulDSO_freqz(const TCHAR * dso_name, float * b, int bn, float * a, int an, int exponentN1);
+void emulDSO_freqz(const TCHAR * dso_name, float * b, int bn, float * a, int an, int exponentN1, int use_dB);
 
 
 void emulDSO_close(int waitForUser);
