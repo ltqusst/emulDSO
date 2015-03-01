@@ -1,7 +1,7 @@
 #ifndef _EMULDSO_H_
 #define _EMULDSO_H_
 
-
+#include <tchar.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -11,7 +11,7 @@ extern "C" {
 //all plots in an window are of same domain, so when user do time-scaling and shifting, 
 //all plots will be scaled and shifted together.
 
-void emulDSO_create(const char * title, int width, int height);
+void emulDSO_create(const TCHAR * title, int width, int height);
 //data_name format:
 //  group_name.data_name@domain_name	domain_name is dso_name, corresponding window name
 //or
@@ -19,13 +19,13 @@ void emulDSO_create(const char * title, int width, int height);
 
 //feature1
 //using internal time counter as x coordinate, data input in serial
-void emulDSO_record(const char * data_name, const char * style, float value);
-void emulDSO_ticktock(const char * dso_name, float step_sec);
-float emulDSO_curtick(const char * dso_name);
+void emulDSO_record(const TCHAR * data_name, const TCHAR * style, float value);
+void emulDSO_ticktock(const TCHAR * dso_name, float step_sec);
+float emulDSO_curtick(const TCHAR * dso_name);
 
 //feature2
 //user supply x coordinate, data input in serial
-void emulDSO_record2(const char * data_name, const char * style, float x, float value);
+void emulDSO_record2(const TCHAR * data_name, const TCHAR * style, float x, float value);
 
 //feature2
 //a freqz method similar to matlab version, internally based on FFT-based DTFT and feature1

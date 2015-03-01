@@ -65,8 +65,8 @@ struct group_info
 };
 static void get_group_name(const TCHAR * name, TCHAR * gname)
 {
-    const TCHAR * pdot = _tcsrchr(name, TEXT('.'));
-    int cnt = strlen(name);
+    const TCHAR * pdot = _tcsrchr(name, _TEXT('.'));
+    int cnt = _tcslen(name);
     if (pdot)
         cnt = pdot - name;
 
@@ -151,7 +151,7 @@ struct DataManager
 
             pg = &(group[pdi->gid]);
             pg->ids.push_back(pdi->id);     //add this new data into group
-            if (pg->bIsDigital && (_tcsstr(pdi->style, TEXT("d")) == NULL)) pg->bIsDigital = false;
+            if (pg->bIsDigital && (_tcsstr(pdi->style, _TEXT("d")) == NULL)) pg->bIsDigital = false;
         }
         else
         {
@@ -284,7 +284,7 @@ log_x1 = -9876;
     pmemBitmap = NULL;
     pcachedBitmap = NULL;
 
-    hDirty = CreateEvent(NULL, FALSE, FALSE, "Dirty");
+    hDirty = CreateEvent(NULL, FALSE, FALSE, _TEXT("Dirty"));
 	
  	// Initialize GDI+.
 	GdiplusStartupInput  gdiplusStartupInput;
@@ -333,7 +333,7 @@ void DSOClass::close(bool bWait)
 	the transform in GDI+ will deform shapes, so is not suitable for our purpose
 	so we have to do our own transform for x-scale and y-scale.
 */
-#define FATAL_ERROR(str) do{_tprintf(TEXT("Line %d: %s\r\n"),__LINE__, str);_exit(0);}while(0)
+#define FATAL_ERROR(str) do{_tprintf(_TEXT("Line %d: %s\r\n"),__LINE__, str);_exit(0);}while(0)
 static int generate_ticks(float x0, float x1, int expect_tick_cnt, vector<float> &ticks)
 {
     ticks.clear();
@@ -508,9 +508,11 @@ void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
 		graphics.FillRectangle(&ValueBgBrush, txtBox);
 		graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnotVal, txtBox, &stringformat, &ValueFgBrush);
     }
-    
+#ifdef _UNICODE
+    _tcscpy(strinfo, di.name);
+#else
     mbstowcs(strinfo, di.name, 128);
-    
+#endif
     graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnot, RectF(), &stringformat, &txtBox);
     txtBox.X = cc.x1 * cc.scale_x - txtBox.Width;
     txtBox.Y = (cc.y0 + id + 1) * cc.scale_y;
@@ -536,9 +538,9 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
 	graphics.SetClip(cc.clip_rc);
 
 	Pen pen(Color::Green, 1);
-	pcfg = _tcsstr(di.style, TEXT("c"));    if (pcfg) pen.SetColor(Color(argb_table[pcfg[1] - '0']));
-    pcfg = _tcsstr(di.style, TEXT("w"));    if (pcfg) pen.SetWidth(pcfg[1] - '0');
-    pcfg = _tcsstr(di.style, TEXT("."));    if (pcfg) pen.SetDashPattern(dashValues, 2);
+    pcfg = _tcsstr(di.style, _TEXT("c"));    if (pcfg) pen.SetColor(Color(argb_table[pcfg[1] - '0']));
+    pcfg = _tcsstr(di.style, _TEXT("w"));    if (pcfg) pen.SetWidth(pcfg[1] - '0');
+    pcfg = _tcsstr(di.style, _TEXT("."));    if (pcfg) pen.SetDashPattern(dashValues, 2);
     Color color(0x80, 0, 0);
     pen.GetColor(&color);
 
@@ -560,7 +562,7 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
     }
     
     graphics.DrawCurve(&pen, curvePoints, cnt);
-    if (_tcsstr(di.style, TEXT("p")))
+    if (_tcsstr(di.style, _TEXT("p")))
     {
         SolidBrush redBrush(color);
         int pw = pen.GetWidth();
@@ -596,8 +598,11 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
 		graphics.FillRectangle(&ValueBgBrush, txtBox);
 		graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnotVal, txtBox, &stringformat, &ValueFgBrush);
     }
-
+#ifdef _UNICODE
+    _tcscpy(strinfo, di.name);
+#else
     mbstowcs(strinfo, di.name, 128);
+#endif
     graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnot, RectF(), &stringformat, &txtBox);
     txtBox.X = cc.x1 * cc.scale_x - txtBox.Width;
     txtBox.Y = cc.y1 * cc.scale_y + txtBox.Height * id;
@@ -639,7 +644,7 @@ void DSOClass::update(Graphics &graphics)
     {
         group_info &g = data_manager.group[i];
         float range = g.range_max - g.range_min;
-        float margin = range * 0.05f;
+        float margin = (range == 0 ? 1.0f : range) * 0.05f;
 		int cur_height = g.bIsDigital ? (DIGITAL_SIGNAL_HEIGHT*g.ids.size()) : plot_height;
 		
 		//setup coordinate and draw
@@ -892,7 +897,7 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
 
 unsigned __stdcall DSOClass::Main(void* param)
 {
-	static TCHAR szAppName[128] = TEXT("DSOWindow") ;
+    static TCHAR szAppName[128] = _TEXT("DSOWindow");
 	DSOClass * pthis = (DSOClass *) param;
     MSG msg ;
     WNDCLASS wndclass ;
@@ -910,7 +915,7 @@ unsigned __stdcall DSOClass::Main(void* param)
     wndclass.hCursor = LoadCursor( NULL, IDC_ARROW ) ;
 
 	if( !RegisterClass( &wndclass ) ){
-        //MessageBox( NULL, TEXT("RegisterClass() failed!"), TEXT("error"), MB_OK | MB_ICONERROR ) ;
+        //MessageBox( NULL, _TEXT("RegisterClass() failed!"), _TEXT("error"), MB_OK | MB_ICONERROR ) ;
         //return 0 ;
     }
 
@@ -968,14 +973,14 @@ void emulDSO_update(const TCHAR *dso_name)
 		::UpdateWindow(pDSO->hwnd);
 	}
 }
-void emulDSO_record2(const char * data_name, const char * style, float x, float value)
+void emulDSO_record2(const TCHAR * data_name, const TCHAR * style, float x, float value)
 {
 	TCHAR inner_data_name[256];
-	const TCHAR * pdso_name = _tcsstr(data_name, "@");
+	const TCHAR * pdso_name = _tcsstr(data_name, _TEXT("@"));
 	if(pdso_name == NULL) 
 	{
-		pdso_name = TEXT("");
-		strcpy(inner_data_name, data_name);
+		pdso_name = _TEXT("");
+		_tcscpy(inner_data_name, data_name);
 	}
 	else
 	{
@@ -1003,13 +1008,14 @@ void emulDSO_record(const TCHAR * data_name, const TCHAR * style, float value)
 
 void emulDSO_ticktock(const TCHAR * dso_name, float step_sec)
 {
-	if(dso_name == NULL) dso_name = TEXT("");
+    if (dso_name == NULL) dso_name = _TEXT("");
 	if(g_DSOmap.find(dso_name) == g_DSOmap.end()) return;
 	DSOClass * pDSO = g_DSOs[g_DSOmap[dso_name]];
 	pDSO->ticktock(step_sec);
 }
 float emulDSO_curtick(const TCHAR * dso_name)
 {
+    if (dso_name == NULL) dso_name = _TEXT("");
 	if(g_DSOmap.find(dso_name) == g_DSOmap.end()) return 0;
 	DSOClass * pDSO = g_DSOs[g_DSOmap[dso_name]];
     return pDSO->data_manager.record_time;
@@ -1226,14 +1232,14 @@ void emulDSO_freqz(const TCHAR * dso_name, float * b, int bn, float * a, int an,
 
 	TCHAR mag_name[256];
 	TCHAR phase_name[256];
-	_stprintf(mag_name, TEXT("magnitude@%s"), dso_name);
-	_stprintf(phase_name, TEXT("phase@%s"), dso_name);
+    _stprintf(mag_name, _TEXT("magnitude@%s"), dso_name);
+    _stprintf(phase_name, _TEXT("phase@%s"), dso_name);
 	
 	float fstep = 0.5f/points;
 	for(int i=0;i<points;i++)
 	{
-		emulDSO_record2(mag_name, TEXT("c0"), i*fstep, X[i].r);
-		emulDSO_record2(phase_name, TEXT("c2"), i*fstep, X[i].i * 180/(3.14159265f));
+        emulDSO_record2(mag_name, _TEXT("c0"), i*fstep, X[i].r);
+        emulDSO_record2(phase_name, _TEXT("c2"), i*fstep, X[i].i * 180 / (3.14159265f));
 	}
 	emulDSO_update(dso_name);
 }
