@@ -936,9 +936,9 @@ unsigned __stdcall DSOClass::Main(void* param)
 static std::vector<DSOClass *>			g_DSOs;
 static std::map<std::string, int>		g_DSOmap;
 
-static const TCHAR * cfg_title;
-static int cfg_width;
-static int cfg_height;
+static const TCHAR * cfg_title = TEXT("");
+static int cfg_width = 600;
+static int cfg_height = 200;
 void emulDSO_create(const TCHAR * title, int width, int height)
 {
 	cfg_title = title;
