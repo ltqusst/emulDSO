@@ -224,6 +224,7 @@ struct DSOClass
         //::InvalidateRect(hwnd, NULL, FALSE);
     }
 
+    float last_invalidate_time;
 	void ticktock(float time_step_sec) 
 	{
         ::EnterCriticalSection(&critical_sec_data);
@@ -233,6 +234,11 @@ struct DSOClass
 		::LeaveCriticalSection(&critical_sec_data);
 
 		::SetEvent(hDirty);
+        if (data_manager.record_time - last_invalidate_time > 0.5)
+        {
+            last_invalidate_time = data_manager.record_time;
+            ::InvalidateRect(hwnd, NULL, FALSE);
+        }
 	}
     ///////////////////////////////////////////////////////////////////////////////
 
@@ -279,6 +285,8 @@ DSOClass::DSOClass(const TCHAR * ptitle, int plot_width, int config_height)
     hmargin = 80;
 
     time_x0 = time_x1 = time_cursor = 0;
+
+    last_invalidate_time = 0;
 
 log_x1 = -9876;
     pmemBitmap = NULL;
@@ -892,7 +900,15 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
 		//if(VK_SPACE == wParam) printf("%f~%f\n", 0.0f, pdso->log_x1);
         return 0;
     case WM_SIZE:
+        GetScrollInfo(hwnd, SB_VERT, &si);
+        si.nPage = HIWORD(lParam);
+        si.fMask = SIF_PAGE;
+        SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+        // If the position has changed, scroll window and update it.
+        pdso->scroll_y = si.nPos;
+
         SetEvent(pdso->hDirty);
+        ::InvalidateRect(hwnd, NULL, false);
     }
     return DefWindowProc( hwnd, message, wParam, lParam ) ;
 }
