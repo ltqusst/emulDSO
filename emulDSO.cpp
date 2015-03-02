@@ -542,7 +542,7 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
 {
 	REAL dashValues[4] = { 1, 1, 1, 1 };
     const TCHAR * pcfg;
-    REAL tension = 0.1;
+    REAL tension = 0.5;
 
 	graphics.SetClip(cc.clip_rc);
 
@@ -739,8 +739,8 @@ void DSOClass::magnify(float time_center, int zDelta)
     float time_0 = time_center - time_x0;
     float time_1 = time_x1 - time_center;
     float time_delta = 0.002f * zDelta;
-    float time_delta0 = time_delta * time_0 / (time_0 + time_1);
-    float time_delta1 = time_delta * time_1 / (time_0 + time_1);
+    float time_delta0 = time_delta * time_0;
+    float time_delta1 = time_delta * time_1;
 
 	if (time_x1-time_delta1 > time_x0+time_delta0)
 	{
