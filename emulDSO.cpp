@@ -534,13 +534,15 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
 {
 	REAL dashValues[4] = { 1, 1, 1, 1 };
     const TCHAR * pcfg;
-    
+    REAL tension = 0.1;
+
 	graphics.SetClip(cc.clip_rc);
 
 	Pen pen(Color::Green, 1);
     pcfg = _tcsstr(di.style, _TEXT("c"));    if (pcfg) pen.SetColor(Color(argb_table[pcfg[1] - '0']));
     pcfg = _tcsstr(di.style, _TEXT("w"));    if (pcfg) pen.SetWidth(pcfg[1] - '0');
     pcfg = _tcsstr(di.style, _TEXT("."));    if (pcfg) pen.SetDashPattern(dashValues, 2);
+    pcfg = _tcsstr(di.style, _TEXT("t"));    if (pcfg) tension = (pcfg[1] - '0') * 0.1f;
     Color color(0x80, 0, 0);
     pen.GetColor(&color);
 
@@ -561,7 +563,7 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
         }
     }
     
-    graphics.DrawCurve(&pen, curvePoints, cnt);
+    graphics.DrawCurve(&pen, curvePoints, cnt, tension);
     if (_tcsstr(di.style, _TEXT("p")))
     {
         SolidBrush redBrush(color);
