@@ -246,6 +246,8 @@ struct DSOClass
     ~DSOClass();
     void close(bool bWait);
     void update(Graphics &graphics);
+
+    bool b_in_display;
 	void display(HDC hdc, PAINTSTRUCT *pps);
 	
     float			scale_time;
@@ -287,6 +289,8 @@ DSOClass::DSOClass(const TCHAR * ptitle, int plot_width, int config_height)
     time_x0 = time_x1 = time_cursor = 0;
 
     last_invalidate_time = 0;
+
+    b_in_display = false;
 
 log_x1 = -9876;
     pmemBitmap = NULL;
@@ -684,8 +688,14 @@ void DSOClass::update(Graphics &graphics)
 //use cached Bitmap to increase performance
 void DSOClass::display(HDC hdc, PAINTSTRUCT *pps)
 {
-	Graphics graphics(hdc);
+    if (b_in_display)
+    {
+        printf("display() is not supposed to re-entriable!\r\n");
+    }
+    b_in_display = true;
 
+	Graphics graphics(hdc);
+    bool bcreat = false;
     if (WaitForSingleObject(hDirty, 0) == WAIT_OBJECT_0)
     {
         if (pmemBitmap) delete pmemBitmap;
@@ -710,10 +720,21 @@ void DSOClass::display(HDC hdc, PAINTSTRUCT *pps)
 		//canvas size should be at least as large as client area
 		if(height < plot_totalHeight) height = plot_totalHeight;
         pmemBitmap = new Bitmap(width, height, &graphics);
+        Status st = pmemBitmap->GetLastStatus();
+        if (st != Ok)
+        {
+            printf("__ERR: Bitmap create failed with %d\n", st);
+        }
 		Graphics * pgraphics = Graphics::FromImage(pmemBitmap);
         update(*pgraphics);
 		delete pgraphics;
         pcachedBitmap = new CachedBitmap(pmemBitmap, &graphics);
+        st = pcachedBitmap->GetLastStatus();
+        if (st != Ok)
+        {
+            printf("__ERR: CachedBitmap create failed with %d\n", st);
+        }
+        bcreat = true;
     }
 
 	//we draw whole graph on mem bitmap, and vertical scroll is done by scroll_y here
@@ -722,6 +743,8 @@ void DSOClass::display(HDC hdc, PAINTSTRUCT *pps)
 		printf("__ERR\n");
 		::SetEvent(hDirty);
 	}
+
+    b_in_display = false;
 }
 float DSOClass::x2time(int xPos)
 {
@@ -855,7 +878,6 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
 			//we don't reply on following windows API to scroll client area
 
             //ScrollWindow(hwnd, 0, (yPos - si.nPos), NULL, NULL);
-            //UpdateWindow (hwnd);
         }
         return 0;
 		break;
@@ -988,7 +1010,6 @@ void emulDSO_update(const TCHAR *dso_name)
 		if((dso_name != NULL) && (_tcscmp(dso_name, pDSO->title)!=0)) continue;
 		::SetEvent(pDSO->hDirty);
 		::InvalidateRect(pDSO->hwnd, NULL, FALSE);
-		::UpdateWindow(pDSO->hwnd);
 	}
 }
 void emulDSO_record2(const TCHAR * data_name, const TCHAR * style, float x, float value)
