@@ -22,6 +22,7 @@ void emulDSO_create(const TCHAR * title, int width, int height);
 void emulDSO_record(const TCHAR * data_name, const TCHAR * style, float value);
 void emulDSO_ticktock(const TCHAR * dso_name, float step_sec);
 float emulDSO_curtick(const TCHAR * dso_name);
+void emulDSO_settick(const TCHAR * dso_name, float time);
 
 //feature2
 //user supply x coordinate, data input in serial

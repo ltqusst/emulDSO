@@ -211,7 +211,7 @@ struct DSOClass
     ///////////////////////////////////////////////////////////////////////////////
     //data recording interface 
     DataManager      data_manager;
-
+    void reset_inner_timer(float t){ data_manager.record_time = t; }
     void record(const TCHAR * data_name, const TCHAR * style, float x, float value){
         ::EnterCriticalSection(&critical_sec_data);
 		if(x == FLT_MAX || x== -FLT_MAX) x = data_manager.record_time;
@@ -922,13 +922,17 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
 		//if(VK_SPACE == wParam) printf("%f~%f\n", 0.0f, pdso->log_x1);
         return 0;
     case WM_SIZE:
+        si.cbSize = sizeof(si);
+        si.fMask = SIF_ALL;
         GetScrollInfo(hwnd, SB_VERT, &si);
-        si.nPage = HIWORD(lParam);
+        
+        si.cbSize = sizeof(si);
+        si.nPage = HIWORD(lParam); //change scroll page size
         si.fMask = SIF_PAGE;
-        SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
-        // If the position has changed, scroll window and update it.
         pdso->scroll_y = si.nPos;
+        SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
 
+        // If the position has changed, scroll window and update it.
         SetEvent(pdso->hDirty);
         ::InvalidateRect(hwnd, NULL, false);
     }
@@ -1012,51 +1016,65 @@ void emulDSO_update(const TCHAR *dso_name)
 		::InvalidateRect(pDSO->hwnd, NULL, FALSE);
 	}
 }
+static DSOClass * _emulDSO_find_DSO(const TCHAR * pdso_name)
+{
+    DSOClass * pDSO;
+    if (pdso_name == NULL) pdso_name = _TEXT("");
+    if (g_DSOmap.find(pdso_name) == g_DSOmap.end())
+    {
+        //create the DSO
+        pDSO = new DSOClass(pdso_name, cfg_width, cfg_height);
+        g_DSOs.push_back(pDSO);
+        g_DSOmap[pdso_name] = g_DSOs.size() - 1;
+    }
+    else pDSO = g_DSOs[g_DSOmap[pdso_name]];
+    return pDSO;
+}
+static DSOClass * _emulDSO_find_Data(const TCHAR * data_name, TCHAR * inner_data_name)
+{
+    const TCHAR * pdso_name = _tcsstr(data_name, _TEXT("@"));
+    if (pdso_name == NULL)
+    {
+        pdso_name = _TEXT("");
+        _tcscpy(inner_data_name, data_name);
+    }
+    else
+    {
+        int len = pdso_name - data_name;
+        _tcsncpy(inner_data_name, data_name, len);
+        inner_data_name[len] = 0;
+        pdso_name++;//skip the '@'
+    }
+    return _emulDSO_find_DSO(pdso_name);
+}
 void emulDSO_record2(const TCHAR * data_name, const TCHAR * style, float x, float value)
 {
-	TCHAR inner_data_name[256];
-	const TCHAR * pdso_name = _tcsstr(data_name, _TEXT("@"));
-	if(pdso_name == NULL) 
-	{
-		pdso_name = _TEXT("");
-		_tcscpy(inner_data_name, data_name);
-	}
-	else
-	{
-		int len = pdso_name - data_name;
-		_tcsncpy(inner_data_name, data_name, len);
-		inner_data_name[len] = 0;
-		pdso_name ++;//skip the '@'
-	}
-	
-	DSOClass * pDSO;
-	if(g_DSOmap.find(pdso_name) == g_DSOmap.end())
-	{
-		//create the DSO
-		pDSO = new DSOClass(pdso_name, cfg_width, cfg_height);
-		g_DSOs.push_back(pDSO);
-		g_DSOmap[pdso_name] = g_DSOs.size()-1;
-	}else pDSO = g_DSOs[g_DSOmap[pdso_name]];
-	
+    TCHAR inner_data_name[256];
+    DSOClass * pDSO = _emulDSO_find_Data(data_name, inner_data_name);
 	pDSO->record(inner_data_name, style, x, value);
 }
 void emulDSO_record(const TCHAR * data_name, const TCHAR * style, float value)
 {
-	emulDSO_record2(data_name, style, FLT_MAX, value);//FLT_MAX means using default internal timer
+    TCHAR inner_data_name[256];
+    DSOClass * pDSO = _emulDSO_find_Data(data_name, inner_data_name);
+    pDSO->record(inner_data_name, style, FLT_MAX, value);
 }
 
+
+
+void emulDSO_settick(const TCHAR * dso_name, float time)
+{
+    DSOClass * pDSO = _emulDSO_find_DSO(dso_name);
+    pDSO->reset_inner_timer(time);
+}
 void emulDSO_ticktock(const TCHAR * dso_name, float step_sec)
 {
-    if (dso_name == NULL) dso_name = _TEXT("");
-	if(g_DSOmap.find(dso_name) == g_DSOmap.end()) return;
-	DSOClass * pDSO = g_DSOs[g_DSOmap[dso_name]];
-	pDSO->ticktock(step_sec);
+    DSOClass * pDSO = _emulDSO_find_DSO(dso_name);
+    pDSO->ticktock(step_sec);
 }
 float emulDSO_curtick(const TCHAR * dso_name)
 {
-    if (dso_name == NULL) dso_name = _TEXT("");
-	if(g_DSOmap.find(dso_name) == g_DSOmap.end()) return 0;
-	DSOClass * pDSO = g_DSOs[g_DSOmap[dso_name]];
+    DSOClass * pDSO = _emulDSO_find_DSO(dso_name);
     return pDSO->data_manager.record_time;
 }
 
