@@ -264,6 +264,7 @@ struct DSOClass
 	void draw_curve(Graphics &graphics, data_info & di, int id);
 
     void magnify(float time_center, int delta);
+    void magnify_min(void);
     void settime(float x_set);
     float x2time(int xPos);
     void setcursor(float x_set);
@@ -776,6 +777,13 @@ void DSOClass::magnify(float time_center, int zDelta)
 		::InvalidateRect(hwnd, NULL, FALSE);
 	}
 }
+void DSOClass::magnify_min(void)
+{
+    time_x0 = data_manager.x_min;
+    time_x1 = data_manager.x_max;
+    ::SetEvent(hDirty);
+    ::InvalidateRect(hwnd, NULL, FALSE);
+}
 void DSOClass::settime(float x_set)
 {
 	if (x_set < data_manager.x_min) x_set = data_manager.x_min;
@@ -907,7 +915,7 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
     case WM_RBUTTONDOWN:
         pt.x = (short)LOWORD(lParam);
         pt.y = (short)HIWORD(lParam);
-        pdso->magnify(pdso->x2time(pt.x), 0x80000000);
+        pdso->magnify_min();
         break;
     case WM_DESTROY:
         PostQuitMessage( 0 ) ;
