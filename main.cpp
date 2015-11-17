@@ -6,8 +6,12 @@
 #include "emulDSO.h"
 #include "gs_file.hpp"
 
+
 int main()
 {
+    //new funtion, can generate bitmap font lib
+    emulDSO_generate_font("fontlib.c", "0123456789", 32, 32); return 0;
+
     int i = 0;
 	printf("Hello, emulDSO!\r\n");
 
@@ -66,3 +70,6 @@ int main()
 	//Sleep(1000*2);
 	return 0;
 }
+
+
+

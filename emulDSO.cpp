@@ -224,7 +224,7 @@ struct DSOClass
         //::InvalidateRect(hwnd, NULL, FALSE);
     }
 
-    float last_invalidate_time;
+	DWORD last_invalidate_systime;
 	void ticktock(float time_step_sec) 
 	{
         ::EnterCriticalSection(&critical_sec_data);
@@ -234,9 +234,13 @@ struct DSOClass
 		::LeaveCriticalSection(&critical_sec_data);
 
 		::SetEvent(hDirty);
-        if (data_manager.record_time - last_invalidate_time > 0.5)
+
+		DWORD systime = GetTickCount();
+		DWORD delta = systime - last_invalidate_systime;
+
+		if (delta > 1000)
         {
-            last_invalidate_time = data_manager.record_time;
+			last_invalidate_systime = systime;
             ::InvalidateRect(hwnd, NULL, FALSE);
         }
 	}
@@ -289,7 +293,7 @@ DSOClass::DSOClass(const TCHAR * ptitle, int plot_width, int config_height)
 
     time_x0 = time_x1 = time_cursor = 0;
 
-    last_invalidate_time = 0;
+	last_invalidate_systime = GetTickCount();
 
     b_in_display = false;
 
@@ -665,8 +669,30 @@ void DSOClass::update(Graphics &graphics)
 		//setup coordinate and draw
 		if (g.bIsDigital) 
 			set_coord(graphics, Rect(x0, y + vmargin, subrc_width, cur_height), time_x0, time_x1, 0, g.ids.size());//each signal take range of 1 
-		else
-			set_coord(graphics, Rect(x0, y + vmargin, subrc_width, plot_height), time_x0, time_x1, g.range_min - margin, g.range_max + margin);
+        else
+        {
+            //re-calculate data range within current time window
+            float rng_min = FLT_MAX;
+            float rng_max = -FLT_MAX;
+            for (unsigned int j = 0; j < g.ids.size(); j++)
+            {
+                data_info &di = data_manager.data[g.ids[j]];
+                int i0, i1, cnt;
+                di.data_id_range(time_x0, time_x1, i0, i1);
+                cnt = i1 - i0 + 1;
+                if (cnt > 0)
+                for (unsigned int k = i0; k < i1; k++)
+                {
+                    if (rng_min > di.data[k].value) rng_min = di.data[k].value;
+                    if (rng_max < di.data[k].value) rng_max = di.data[k].value;
+                }
+            }
+            float rng_size = (rng_max - rng_min);
+            float rng_margin = (rng_size < 0.0000001f ? 1.0f : rng_size * 0.05f);
+            set_coord(graphics, Rect(x0, y + vmargin, subrc_width, plot_height), time_x0, time_x1, rng_min - rng_margin, rng_max + rng_margin);
+            //set_coord(graphics, Rect(x0, y + vmargin, subrc_width, plot_height), time_x0, time_x1, g.range_min - margin, g.range_max + margin);
+        }
+			
         
 		for (unsigned int j = 0; j < g.ids.size(); j++){
             data_info &di = data_manager.data[g.ids[j]];
@@ -996,14 +1022,17 @@ static std::map<std::string, int>		g_DSOmap;
 static const TCHAR * cfg_title = TEXT("");
 static int cfg_width = 600;
 static int cfg_height = 200;
+static bool cfg_enable = false;
 void emulDSO_create(const TCHAR * title, int width, int height)
 {
 	cfg_title = title;
 	cfg_width = width;
 	cfg_height = height;
+    cfg_enable = true;
 }
 void emulDSO_close(int waitForUser)
 {
+    if (!cfg_enable) return;
 	emulDSO_update(NULL);
 	for(int i=0;i<g_DSOs.size(); i++)
 	{
@@ -1012,9 +1041,11 @@ void emulDSO_close(int waitForUser)
 	}
 	g_DSOs.clear();
 	g_DSOmap.clear();
+    cfg_enable = false;
 }
 void emulDSO_update(const TCHAR *dso_name)
 {
+    if (!cfg_enable) return;
 	for(int i=0;i<g_DSOs.size(); i++)
 	{
 		DSOClass * pDSO = g_DSOs[i];
@@ -1026,6 +1057,7 @@ void emulDSO_update(const TCHAR *dso_name)
 }
 static DSOClass * _emulDSO_find_DSO(const TCHAR * pdso_name)
 {
+    if (!cfg_enable) return NULL;
     DSOClass * pDSO;
     if (pdso_name == NULL) pdso_name = _TEXT("");
     if (g_DSOmap.find(pdso_name) == g_DSOmap.end())
@@ -1040,6 +1072,7 @@ static DSOClass * _emulDSO_find_DSO(const TCHAR * pdso_name)
 }
 static DSOClass * _emulDSO_find_Data(const TCHAR * data_name, TCHAR * inner_data_name)
 {
+    if (!cfg_enable) return NULL;
     const TCHAR * pdso_name = _tcsstr(data_name, _TEXT("@"));
     if (pdso_name == NULL)
     {
@@ -1057,36 +1090,181 @@ static DSOClass * _emulDSO_find_Data(const TCHAR * data_name, TCHAR * inner_data
 }
 void emulDSO_record2(const TCHAR * data_name, const TCHAR * style, float x, float value)
 {
+    if (!cfg_enable) return;
     TCHAR inner_data_name[256];
     DSOClass * pDSO = _emulDSO_find_Data(data_name, inner_data_name);
 	pDSO->record(inner_data_name, style, x, value);
 }
 void emulDSO_record(const TCHAR * data_name, const TCHAR * style, float value)
 {
+    if (!cfg_enable) return;
     TCHAR inner_data_name[256];
     DSOClass * pDSO = _emulDSO_find_Data(data_name, inner_data_name);
     pDSO->record(inner_data_name, style, FLT_MAX, value);
 }
 
+static float tick_log[256] = { 0 };
+static int   tick_id = 0;
+void emulDSO_record3(const TCHAR * data_name, const TCHAR * style, int tick_offset, float value)
+{
+    if (!cfg_enable) return;
+    float x;
+    TCHAR inner_data_name[256];
+    DSOClass * pDSO = _emulDSO_find_Data(data_name, inner_data_name);
+    x = tick_log[(tick_id + tick_offset) & 255];
+    pDSO->record(inner_data_name, style, x, value);
+}
 
+
+void emulDSO_get_text(const TCHAR * data_name, const TCHAR * txt, 
+					  int size, 
+					  char * pdata, int w, int h)
+{
+    TCHAR inner_data_name[256];
+    DSOClass * pDSO = _emulDSO_find_Data(data_name, inner_data_name);
+
+	HDC hdc = GetDC(pDSO->hwnd);
+	{
+		Graphics graphics(hdc);
+		WCHAR strinfo[128];
+		StringFormat stringformat;
+        stringformat.SetAlignment(StringAlignmentCenter);
+        stringformat.SetLineAlignment(StringAlignmentCenter);
+	#ifdef _UNICODE
+		_tcscpy(strinfo, di.name);
+	#else
+		mbstowcs(strinfo, txt, 128);
+	#endif
+
+		RectF txtBox;
+		Font * pfont;
+        SolidBrush ValueFgBrush(Color::White);
+        SolidBrush ValueBgBrush(Color::Black);
+        SolidBrush ValueCleanBrush(Color::AntiqueWhite);
+
+        txtBox.Width = pDSO->width;
+		txtBox.Height = pDSO->height;
+        graphics.FillRectangle(&ValueCleanBrush, txtBox);
+
+		//pfont = new Font(L"Arial", size, FontStyleRegular, UnitPixel);
+		pfont = new Font(L"Consolas", size, FontStyleRegular, UnitPixel);
+		//graphics.MeasureString(strinfo, wcslen(strinfo), pfont, RectF(), &stringformat, &txtBox);
+        txtBox.Width = w;
+        txtBox.Height = h;
+		graphics.FillRectangle(&ValueBgBrush, txtBox);
+		//graphics.DrawString(strinfo, -1, pfont, txtBox, stringformat.GenericTypographic(), &ValueFgBrush);
+        graphics.DrawString(strinfo, -1, pfont, txtBox, &stringformat, &ValueFgBrush);
+
+		for(int y=0; y<h; y++)
+		{
+			for(int x=0; x<w; x++)
+			{
+				COLORREF color = ::GetPixel(hdc, x, y);
+                pdata[y*w + x] = GetRValue(color);
+                ::SetPixel(hdc, x + (pDSO->width - w) / 2, y + +(pDSO->height - h) / 2,
+                    RGB(pdata[y*w + x], pdata[y*w + x], pdata[y*w + x]));
+			}
+		}
+
+		delete pfont;
+	}
+	::ReleaseDC(pDSO->hwnd, hdc);
+}
 
 void emulDSO_settick(const TCHAR * dso_name, float time)
 {
+    if (!cfg_enable) return;
     DSOClass * pDSO = _emulDSO_find_DSO(dso_name);
     pDSO->reset_inner_timer(time);
 }
+
 void emulDSO_ticktock(const TCHAR * dso_name, float step_sec)
 {
+    if (!cfg_enable) return;
     DSOClass * pDSO = _emulDSO_find_DSO(dso_name);
     pDSO->ticktock(step_sec);
+
+    //record current tick into buffer
+    tick_id++;
+    tick_log[tick_id & 255] = pDSO->data_manager.record_time;
 }
 float emulDSO_curtick(const TCHAR * dso_name)
 {
+    if (!cfg_enable) return 0;
     DSOClass * pDSO = _emulDSO_find_DSO(dso_name);
     return pDSO->data_manager.record_time;
 }
 
 
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+// bitmap font lib generate support
+//
+static char * u8name(unsigned char data)
+{
+    static char name[10];
+    int i;
+    for (i = 0; i < 8; i++)
+    {
+        name[i] = (data & (1 << (7 - i))) ? 'X' : '_';
+    }
+    name[i] = 0;
+    return name;
+}
+static void font_lib_output(FILE *fp, char * pgray, int w, int h)
+{
+    int x, y, byte, i;
+    fprintf(fp, "\t{\n\t");
+    for (y = 0; y < h; y++)
+    {
+        for (x = 0; x < w; x++)
+        {
+            //left to right, MSB to LSB
+            i = 7 - (x & 7);
+            if (i == 7) byte = 0;
+            byte |= pgray[x] ? (1 << i) : (0);
+
+            if (i == 0) fprintf(fp, "%s,", u8name(byte));
+        }
+        fprintf(fp, "\n\t");
+        pgray += w;
+    }
+    fprintf(fp, "\t},\n");
+}
+void emulDSO_generate_font(const char * out_file, const char * strFont, int w, int h)
+{
+    char data[128 * 128];
+    char txt[2] = { 0 };
+    int fsize = w * 1.45;
+    int len = strlen(strFont);
+
+    FILE * fp = fopen(out_file, "wb");
+    int i;
+
+    for (i = 0; i <= 0xFF; i++)
+        fprintf(fp, "#define %s 0x%02x\n", u8name(i), i);
+
+    fprintf(fp, "\n");
+
+    //create the window/UI_thread and wait for initialize
+    emulDSO_create("test", 600, 200);
+    emulDSO_get_text("text", "0", 10, data, w, h);	Sleep(100);
+
+    fprintf(fp, "static unsigned char digits%dx%d_font[][%d * %d / 8] =\n{\n", w, h, w, h);
+    //start draw and capture
+    for (i = 0; i<len; i++)
+    {
+        txt[0] = strFont[i];
+        emulDSO_get_text("text", txt, fsize, data, w, h + h / 8);//the last (h/8) lines are empty
+        fprintf(fp, "//%s\n", txt);
+        font_lib_output(fp, data, w, h);
+    }
+    fprintf(fp, "}\n");
+    fclose(fp);
+    Sleep(1000);
+    return;
+}
+/////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1299,6 +1477,8 @@ void Freqz(float * b, int bn,
 }
 void emulDSO_freqz(const TCHAR * dso_name, float * b, int bn, float * a, int an, int exponentN1, int use_dB)
 {
+    if (!cfg_enable) return;
+
 	int points = 1<<exponentN1;
 	complex * X = new complex[points];
 	Freqz(b,bn,a,an, X, exponentN1);
