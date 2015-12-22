@@ -460,19 +460,24 @@ void DSOClass::set_coord(Graphics &graphics, Rect &rc,
 }
 
 static const ARGB argb_table[] = {
-    Color::Red,         Color::Lime,        Color::Blue,            Color::Brown, 
-    Color::DarkGreen,   Color::DarkBlue,    Color::DeepSkyBlue,     Color::DeepPink,
+    Color::Red, Color::Green, Color::Blue, Color::Brown,
+    Color::DarkGreen, Color::DarkBlue, Color::DeepSkyBlue, Color::DeepPink,
     Color::BlueViolet, Color::DarkCyan, Color::DarkGoldenrod, Color::Purple,
     Color::BurlyWood, Color::Cornsilk, Color::Orange, Color::Pink, Color::AliceBlue, Color::LawnGreen, Color::LightPink, Color::LightGreen, Color::LightBlue,
 };
-
+static const ARGB argb_table_digit[] = {
+    Color::Red, Color::Lime, Color::Blue, Color::Brown,
+    Color::DarkGreen, Color::DarkBlue, Color::DeepSkyBlue, Color::DeepPink,
+    Color::BlueViolet, Color::DarkCyan, Color::DarkGoldenrod, Color::Purple,
+    Color::BurlyWood, Color::Cornsilk, Color::Orange, Color::Pink, Color::AliceBlue, Color::LawnGreen, Color::LightPink, Color::LightGreen, Color::LightBlue,
+};
 void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
 {
     WCHAR strinfo[128];
     StringFormat stringformat;
     stringformat.SetAlignment(StringAlignmentCenter);
     stringformat.SetLineAlignment(StringAlignmentCenter);
-    Color c(argb_table[0]);
+    Color c(argb_table_digit[0]);
     SolidBrush BgBrush(c);
     SolidBrush FgBrush(c);
 
@@ -489,9 +494,9 @@ void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
         {
             int data = (int)(di.data[i0].value);
             //draw data from i0 to(i-1)
-            int cid = data % (sizeof(argb_table) / sizeof(argb_table[0]));
-            BgBrush.SetColor(Color(argb_table[cid]));
-            FgBrush.SetColor(Color((~argb_table[cid]) | Color::AlphaMask));
+            int cid = data % (sizeof(argb_table_digit) / sizeof(argb_table_digit[0]));
+            BgBrush.SetColor(Color(argb_table_digit[cid]));
+            FgBrush.SetColor(Color((~argb_table_digit[cid]) | Color::AlphaMask));
             float w;
             if (i < di.data.size()) w = (di.data[i].time - di.data[i0].time) * cc.scale_x;
 			else w = (data_manager.x_max - di.data[i0].time) * cc.scale_x;

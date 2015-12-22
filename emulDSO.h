@@ -47,11 +47,11 @@ void emulDSO_generate_font(const char * out_file, const char * strFont, int w, i
 
 #else
 #define emulDSO_create(title, width, height)
-#define emulDSO_record(data_name, style, value)
 #define emulDSO_ticktock(dso_name,step_sec)
 #define emulDSO_curtick(dso_name)
 #define emulDSO_close(waitForUser)
 #define emulDSO_update()
+#define emulDSO_record(data_name, style, value)
 #define emulDSO_record2( data_name, style, x, value)
 #define emulDSO_record3( data_name, style, tick_offset, value)
 
