@@ -126,6 +126,7 @@ struct DataManager
             _tcscpy(pdi->style, style);
             pdi->range_min = value;
             pdi->range_max = value;
+			pdi->data.reserve(100*60);// this can speed up little
 
             //mapping name
             name2id[data_name] = pdi->id;
@@ -238,7 +239,7 @@ struct DSOClass
 		DWORD systime = GetTickCount();
 		DWORD delta = systime - last_invalidate_systime;
 
-		if (delta > 1000)
+		if (delta > 40)
         {
 			last_invalidate_systime = systime;
             ::InvalidateRect(hwnd, NULL, FALSE);
@@ -248,6 +249,8 @@ struct DSOClass
 
     DSOClass(const TCHAR * ptitle, int plot_width, int plot_height);
     ~DSOClass();
+
+	void reset(void);
     void close(bool bWait);
     void update(Graphics &graphics);
 
@@ -260,6 +263,8 @@ struct DSOClass
 	float	log_x1;
     float           time_cursor;
     float           time_down;
+
+	FUNC_KEYPROC	func_keyproc;
 
 	DSOCoordinate	cc;
 	
@@ -285,21 +290,9 @@ DSOClass::DSOClass(const TCHAR * ptitle, int plot_width, int config_height)
     height = width = plot_width;
 
 	plot_height = config_height;
-	plot_totalHeight = 0;
-	scroll_y = 0;
 
-    vmargin = 10;
-    hmargin = 80;
-
-    time_x0 = time_x1 = time_cursor = 0;
-
+	
 	last_invalidate_systime = GetTickCount();
-
-    b_in_display = false;
-
-log_x1 = -9876;
-    pmemBitmap = NULL;
-    pcachedBitmap = NULL;
 
     hDirty = CreateEvent(NULL, FALSE, FALSE, _TEXT("Dirty"));
 	
@@ -313,14 +306,43 @@ log_x1 = -9876;
     pfontTicksX = new Font(L"Consolas", 12, FontStyleRegular, UnitPixel);
 
 	main_thread = (HANDLE)_beginthreadex(NULL, 0, Main, this, 0, NULL);
-	scale_time = 1.0;
-    data_manager.clear();
+
+	pmemBitmap = NULL;
+    pcachedBitmap = NULL;
+	reset();
 
     bOpened = true;
 }
+
 DSOClass::~DSOClass()
 {
     close(true);
+}
+
+void DSOClass::reset(void)
+{
+	::EnterCriticalSection(&critical_sec_data);
+	plot_totalHeight = 0;
+	scroll_y = 0;
+
+    vmargin = 10;
+    hmargin = 80;
+
+    time_x0 = time_x1 = time_cursor = 0;
+
+
+    b_in_display = false;
+
+log_x1 = -9876;
+
+    if (pmemBitmap) delete pmemBitmap;
+    if (pcachedBitmap) delete pcachedBitmap;
+    pmemBitmap = NULL;
+    pcachedBitmap = NULL;
+
+	scale_time = 1.0;
+    data_manager.clear();
+	::LeaveCriticalSection(&critical_sec_data);
 }
 
 void DSOClass::close(bool bWait)
@@ -573,19 +595,84 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
 	di.data_id_range(time_x0, time_x1, i0,i1);
 	cnt = i1-i0+1;
 
+	//we are doing a smart downsample for points in same integer time pixel location
+	//basic idea is to using maxmium of 4 points to represent a single integer time pixel location
+	//the first,the last, the min and the max, added in order of true time of each point
+	int pix_curX = -9999;
+	PointF sameX_minY;
+	PointF sameX_maxY;
+	PointF sameX_firstY;
+	PointF sameX_lastY;
+	int sameX_ptcnt = 0;
+
+	int true_cnt = 0;
     PointF * curvePoints = new PointF[cnt];
     float fCursorValue = 0;
     for (unsigned int i = 0; i < cnt; i++)
     {
-        curvePoints[i].X = di.data[i+i0].time * cc.scale_x;
-        curvePoints[i].Y = di.data[i+i0].value * cc.scale_y;
+		PointF curPoint;
+		curPoint.X = di.data[i+i0].time * cc.scale_x;
+		curPoint.Y = di.data[i+i0].value * cc.scale_y;
+
+        //curvePoints[i].X = di.data[i+i0].time * cc.scale_x;
+        //curvePoints[i].Y = di.data[i+i0].value * cc.scale_y;
+
+		int int_X = curPoint.X;
+		//check if we are within the same "time pixel", 
+		//if so we can simplify the curve as passing 4 points:
+		//      first,min,max,last
+		if(pix_curX == int_X)
+		{
+			sameX_lastY = curPoint;
+			if(sameX_minY.Y > curPoint.Y) sameX_minY = curPoint;
+			if(sameX_maxY.Y < curPoint.Y) sameX_maxY = curPoint;
+			sameX_ptcnt++;
+		}
+		else
+		{
+			//for previous integer time pixel location
+			if(sameX_ptcnt > 0) curvePoints[true_cnt++] = sameX_firstY;
+			if(sameX_ptcnt >= 4)
+			{
+				if(sameX_minY.X < sameX_maxY.X){
+					curvePoints[true_cnt++] = sameX_minY;
+					curvePoints[true_cnt++] = sameX_maxY;
+				}
+				else{
+					curvePoints[true_cnt++] = sameX_maxY;
+					curvePoints[true_cnt++] = sameX_minY;
+				}
+			}
+			if(sameX_ptcnt >= 2) curvePoints[true_cnt++] = sameX_lastY;
+
+			//for the next pix
+			sameX_firstY = sameX_maxY = sameX_minY = curPoint;
+			sameX_ptcnt = 1;
+			pix_curX = int_X;
+		}
+
         if (di.data[i+i0].time <= time_cursor){
             time_cursor_lc = di.data[i+i0].time;
             fCursorValue = di.data[i+i0].value;
         }
     }
-    
-    graphics.DrawCurve(&pen, curvePoints, cnt, tension);
+
+	//the last time pixel
+	if(sameX_ptcnt > 0) curvePoints[true_cnt++] = sameX_firstY;
+	if(sameX_ptcnt >= 4)
+	{
+		if(sameX_minY.X < sameX_maxY.X){
+			curvePoints[true_cnt++] = sameX_minY;
+			curvePoints[true_cnt++] = sameX_maxY;
+		}
+		else{
+			curvePoints[true_cnt++] = sameX_maxY;
+			curvePoints[true_cnt++] = sameX_minY;
+		}
+	}
+	if(sameX_ptcnt >= 2) curvePoints[true_cnt++] = sameX_lastY;
+
+    graphics.DrawCurve(&pen, curvePoints, true_cnt, tension);
     if (_tcsstr(di.style, _TEXT("p")))
     {
         SolidBrush redBrush(color);
@@ -720,16 +807,16 @@ void DSOClass::update(Graphics &graphics)
 //use cached Bitmap to increase performance
 void DSOClass::display(HDC hdc, PAINTSTRUCT *pps)
 {
-    if (b_in_display)
-    {
-        printf("display() is not supposed to re-entriable!\r\n");
-    }
-    b_in_display = true;
-
 	Graphics graphics(hdc);
     bool bcreat = false;
     if (WaitForSingleObject(hDirty, 0) == WAIT_OBJECT_0)
     {
+		if (b_in_display)
+		{
+			printf("display() is not supposed to re-entriable!\r\n");
+		}
+		b_in_display = true;
+
         if (pmemBitmap) delete pmemBitmap;
         if (pcachedBitmap) delete pcachedBitmap;
         RECT rc;
@@ -957,6 +1044,10 @@ LRESULT CALLBACK DSOClass::WndProc( HWND hwnd, UINT message, WPARAM wParam, LPAR
 		{
 			::InvalidateRect(hwnd,NULL,FALSE);
 			//SetEvent(pdso->hDirty); //for debug
+		}
+		if(pdso->func_keyproc)
+		{
+			(*pdso->func_keyproc)(wParam);
 		}
 		//if(VK_SPACE == wParam) printf("%f~%f\n", 0.0f, pdso->log_x1);
         return 0;
@@ -1200,7 +1291,25 @@ float emulDSO_curtick(const TCHAR * dso_name)
     return pDSO->data_manager.record_time;
 }
 
-
+void emulDSO_setdisp(const TCHAR * dso_name, float time)
+{
+    DSOClass * pDSO = _emulDSO_find_DSO(dso_name);
+	if(time < 0)
+	{
+		pDSO->time_x1 = pDSO->data_manager.record_time;
+		pDSO->time_x0 = pDSO->data_manager.record_time + time;
+	}
+}
+void emulDSO_setkeyCB(const TCHAR * dso_name, FUNC_KEYPROC pfunc)
+{
+	DSOClass * pDSO = _emulDSO_find_DSO(dso_name);
+	pDSO->func_keyproc = pfunc;
+}
+void emulDSO_reset(const TCHAR * dso_name)
+{
+	DSOClass * pDSO = _emulDSO_find_DSO(dso_name);
+	pDSO->reset();
+}
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 // bitmap font lib generate support

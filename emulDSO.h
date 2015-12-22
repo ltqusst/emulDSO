@@ -23,6 +23,12 @@ void emulDSO_record(const TCHAR * data_name, const TCHAR * style, float value);
 void emulDSO_ticktock(const TCHAR * dso_name, float step_sec);
 float emulDSO_curtick(const TCHAR * dso_name);
 void emulDSO_settick(const TCHAR * dso_name, float time);
+void emulDSO_setdisp(const TCHAR * dso_name, float time);
+
+
+typedef void (*FUNC_KEYPROC)(int key);
+void emulDSO_setkeyCB(const TCHAR * dso_name, FUNC_KEYPROC pfunc);
+void emulDSO_reset(const TCHAR * dso_name);
 
 //feature2
 //user supply x coordinate, data input in serial
