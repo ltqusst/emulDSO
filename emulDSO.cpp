@@ -291,7 +291,8 @@ DSOClass::DSOClass(const TCHAR * ptitle, int plot_width, int config_height)
 
 	plot_height = config_height;
 
-	
+    func_keyproc = NULL;
+
 	last_invalidate_systime = GetTickCount();
 
     hDirty = CreateEvent(NULL, FALSE, FALSE, _TEXT("Dirty"));
@@ -601,10 +602,7 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
 	int pix_curX = -9999;
 	PointF sameX_minY;
 	PointF sameX_maxY;
-	PointF sameX_firstY;
-	PointF sameX_lastY;
 	int sameX_ptcnt = 0;
-
 	int true_cnt = 0;
     PointF * curvePoints = new PointF[cnt];
     float fCursorValue = 0;
@@ -614,16 +612,12 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
 		curPoint.X = di.data[i+i0].time * cc.scale_x;
 		curPoint.Y = di.data[i+i0].value * cc.scale_y;
 
-        //curvePoints[i].X = di.data[i+i0].time * cc.scale_x;
-        //curvePoints[i].Y = di.data[i+i0].value * cc.scale_y;
-
 		int int_X = curPoint.X;
 		//check if we are within the same "time pixel", 
-		//if so we can simplify the curve as passing 4 points:
-		//      first,min,max,last
+		//if so we can simplify the curve at this time pixel 
+        //as passing 2 points: min & max in the order of their occurences
 		if(pix_curX == int_X)
 		{
-			sameX_lastY = curPoint;
 			if(sameX_minY.Y > curPoint.Y) sameX_minY = curPoint;
 			if(sameX_maxY.Y < curPoint.Y) sameX_maxY = curPoint;
 			sameX_ptcnt++;
@@ -631,8 +625,7 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
 		else
 		{
 			//for previous integer time pixel location
-			if(sameX_ptcnt > 0) curvePoints[true_cnt++] = sameX_firstY;
-			if(sameX_ptcnt >= 4)
+			if(sameX_ptcnt >= 2)
 			{
 				if(sameX_minY.X < sameX_maxY.X){
 					curvePoints[true_cnt++] = sameX_minY;
@@ -642,11 +635,13 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
 					curvePoints[true_cnt++] = sameX_maxY;
 					curvePoints[true_cnt++] = sameX_minY;
 				}
-			}
-			if(sameX_ptcnt >= 2) curvePoints[true_cnt++] = sameX_lastY;
-
-			//for the next pix
-			sameX_firstY = sameX_maxY = sameX_minY = curPoint;
+            }
+            else
+            if (sameX_ptcnt == 1)
+                curvePoints[true_cnt++] = sameX_minY;
+            
+			//for the next time pixel
+			sameX_maxY = sameX_minY = curPoint;
 			sameX_ptcnt = 1;
 			pix_curX = int_X;
 		}
@@ -658,27 +653,29 @@ void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
     }
 
 	//the last time pixel
-	if(sameX_ptcnt > 0) curvePoints[true_cnt++] = sameX_firstY;
-	if(sameX_ptcnt >= 4)
-	{
-		if(sameX_minY.X < sameX_maxY.X){
-			curvePoints[true_cnt++] = sameX_minY;
-			curvePoints[true_cnt++] = sameX_maxY;
-		}
-		else{
-			curvePoints[true_cnt++] = sameX_maxY;
-			curvePoints[true_cnt++] = sameX_minY;
-		}
-	}
-	if(sameX_ptcnt >= 2) curvePoints[true_cnt++] = sameX_lastY;
-
-    graphics.DrawCurve(&pen, curvePoints, true_cnt, tension);
-    if (_tcsstr(di.style, _TEXT("p")))
+    if (sameX_ptcnt >= 2)
     {
-        SolidBrush redBrush(color);
+        if (sameX_minY.X < sameX_maxY.X){
+            curvePoints[true_cnt++] = sameX_minY;
+            curvePoints[true_cnt++] = sameX_maxY;
+        }
+        else{
+            curvePoints[true_cnt++] = sameX_maxY;
+            curvePoints[true_cnt++] = sameX_minY;
+        }
+    }
+    else
+    if (sameX_ptcnt == 1)
+        curvePoints[true_cnt++] = sameX_minY;
+
+    //draw point marker only if the curve is not too much squeezed
+    graphics.DrawCurve(&pen, curvePoints, true_cnt, tension);
+    if (_tcsstr(di.style, _TEXT("p")) && true_cnt == cnt )
+    {
+        SolidBrush markerBrush(color);
         int pw = pen.GetWidth();
-        for (int i = 0; i < cnt; i++)
-            graphics.FillRectangle(&redBrush, Rect(curvePoints[i].X - pw, curvePoints[i].Y - pw, pw * 2 + 1, pw * 2 + 1));
+        for (int i = 0; i < true_cnt; i++)
+            graphics.FillRectangle(&markerBrush, Rect(curvePoints[i].X - pw, curvePoints[i].Y - pw, pw * 2 + 1, pw * 2 + 1));
     }
     delete[]curvePoints;
 
