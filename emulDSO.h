@@ -38,6 +38,10 @@ void emulDSO_record2(const TCHAR * data_name, const TCHAR * style, float x, floa
 //user specify the previous ticks id to add passed data
 void emulDSO_record3(const TCHAR * data_name, const TCHAR * style, int tick_offset, float value);
 
+//feature:Spectra
+//user specify an element of spectra(with same data_name) by index, internally it will transfer into multiple data
+void emulDSO_recordS(const TCHAR * data_name, const TCHAR * style, int index, float value);
+
 //feature2
 //a freqz method similar to matlab version, internally based on FFT-based DTFT and feature1
 void emulDSO_freqz(const TCHAR * dso_name, float * b, int bn, float * a, int an, int exponentN1, int use_dB);

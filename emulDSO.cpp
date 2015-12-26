@@ -59,6 +59,7 @@ struct data_info
 struct group_info
 {
     bool bIsDigital;
+	int  iSpectraHeight;
     float range_min;
     float range_max;
     std::vector<int> ids;   //data id of this group
@@ -153,6 +154,15 @@ struct DataManager
             pg = &(group[pdi->gid]);
             pg->ids.push_back(pdi->id);     //add this new data into group
             if (pg->bIsDigital && (_tcsstr(pdi->style, _TEXT("d")) == NULL)) pg->bIsDigital = false;
+
+			const TCHAR * pcfg = _tcsstr(pdi->style, _TEXT("s"));
+			pg->iSpectraHeight = 0;
+			if (pcfg != NULL) {
+				if (pcfg[1] > _TEXT('0') && pcfg[1] <= _TEXT('9'))
+					pg->iSpectraHeight = pcfg[1] - _TEXT('0');
+				else
+					pg->iSpectraHeight = 1;
+			}
         }
         else
         {
@@ -271,6 +281,7 @@ struct DSOClass
 	void set_coord(Graphics &graphics, Rect &rc, float x0, float x1,float y0, float y1);
     void draw_digital(Graphics &graphics, data_info & di, int id);
 	void draw_curve(Graphics &graphics, data_info & di, int id);
+	void draw_spectra(Graphics &graphics, data_info & di, int id, int cnt);
 
     void magnify(float time_center, int delta);
     void magnify_min(void);
@@ -482,6 +493,14 @@ void DSOClass::set_coord(Graphics &graphics, Rect &rc,
 	graphics.DrawRectangle(&pen, cc.clip_rc);
 }
 
+/*
+ digital is a powerful display style, besides the normal discrete digital number display mode
+ "d"
+ it can also use continuous color to represent one line of spectrogram
+ "ds"
+
+
+*/
 static const ARGB argb_table[] = {
     Color::Red, Color::Green, Color::Blue, Color::Brown,
     Color::DarkGreen, Color::DarkBlue, Color::DeepSkyBlue, Color::DeepPink,
@@ -496,6 +515,7 @@ static const ARGB argb_table_digit[] = {
 };
 void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
 {
+	const TCHAR * pcfg;
     WCHAR strinfo[128];
     StringFormat stringformat;
     stringformat.SetAlignment(StringAlignmentCenter);
@@ -505,6 +525,7 @@ void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
     SolidBrush FgBrush(c);
 
 	int i0,i1;
+
 	di.data_id_range(time_x0, time_x1, i0,i1);
 	
 	graphics.SetClip(cc.clip_rc);
@@ -516,17 +537,17 @@ void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
             (di.data[i].time > cc.x1))
         {
             int data = (int)(di.data[i0].value);
-            //draw data from i0 to(i-1)
-            int cid = data % (sizeof(argb_table_digit) / sizeof(argb_table_digit[0]));
-            BgBrush.SetColor(Color(argb_table_digit[cid]));
-            FgBrush.SetColor(Color((~argb_table_digit[cid]) | Color::AlphaMask));
-            float w;
-            if (i < di.data.size()) w = (di.data[i].time - di.data[i0].time) * cc.scale_x;
+			//draw data from i0 to(i-1)
+			int cid = data % (sizeof(argb_table_digit) / sizeof(argb_table_digit[0]));
+			BgBrush.SetColor(Color(argb_table_digit[cid]));
+			FgBrush.SetColor(Color((~argb_table_digit[cid]) | Color::AlphaMask));
+			float w;
+			if (i < di.data.size()) w = (di.data[i].time - di.data[i0].time) * cc.scale_x;
 			else w = (data_manager.x_max - di.data[i0].time) * cc.scale_x;
-            RectF rc(di.data[i0].time * cc.scale_x, (cc.y0 + id + 1) * cc.scale_y, w, -1.0f * cc.scale_y);
-            graphics.FillRectangle(&BgBrush, rc);
-            swprintf(strinfo, L"%d", data);
-            graphics.DrawString(strinfo, wcslen(strinfo), pfontDigital, rc, &stringformat, &FgBrush);
+			RectF rc(di.data[i0].time * cc.scale_x, (cc.y0 + id + 1) * cc.scale_y, w, -1.0f * cc.scale_y);
+			graphics.FillRectangle(&BgBrush, rc);
+			swprintf(strinfo, L"%d", data);
+			graphics.DrawString(strinfo, wcslen(strinfo), pfontDigital, rc, &stringformat, &FgBrush);
             i0 = i;
         }
         if (i<di.data.size() && di.data[i].time <= time_cursor) fCursorValue = di.data[i].value;
@@ -553,18 +574,20 @@ void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
 		graphics.FillRectangle(&ValueBgBrush, txtBox);
 		graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnotVal, txtBox, &stringformat, &ValueFgBrush);
     }
-#ifdef _UNICODE
-    _tcscpy(strinfo, di.name);
-#else
-    mbstowcs(strinfo, di.name, 128);
-#endif
-    graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnot, RectF(), &stringformat, &txtBox);
-    txtBox.X = cc.x1 * cc.scale_x - txtBox.Width;
-    txtBox.Y = (cc.y0 + id + 1) * cc.scale_y;
-	graphics.FillRectangle(&AnnotBgBrush, txtBox);
-    graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnot, txtBox, &stringformat, &FgBrush);
 	
-    if (bDrawCursor)
+#ifdef _UNICODE
+	_tcscpy(strinfo, di.name);
+#else
+	mbstowcs(strinfo, di.name, 128);
+#endif
+	graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnot, RectF(), &stringformat, &txtBox);
+	txtBox.X = cc.x1 * cc.scale_x - txtBox.Width;
+	txtBox.Y = (cc.y0 + id + 1) * cc.scale_y;
+
+	graphics.FillRectangle(&AnnotBgBrush, txtBox);
+	graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnot, txtBox, &stringformat, &FgBrush);
+
+	if (bDrawCursor)
     {
         swprintf(strinfo, L" %d", (int)(fCursorValue));
 		graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnotVal, RectF(), &stringformat, &txtBox);
@@ -575,6 +598,87 @@ void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
 }
 
 
+void DSOClass::draw_spectra(Graphics &graphics, data_info & di, int id, int cnt)
+{
+	const TCHAR * pcfg;
+	WCHAR strinfo[128];
+	StringFormat stringformat;
+	stringformat.SetAlignment(StringAlignmentCenter);
+	stringformat.SetLineAlignment(StringAlignmentCenter);
+	Color c(argb_table_digit[0]);
+	SolidBrush BgBrush(c);
+	SolidBrush FgBrush(c);
+
+	int i0, i1;
+
+	di.data_id_range(time_x0, time_x1, i0, i1);
+
+	graphics.SetClip(cc.clip_rc);
+	float fCursorValue = di.data[i0].value;
+	for (unsigned int i = i0; i <= i1 + 1; i++)
+	{
+		if ((i == di.data.size()) ||
+			(i > 0 && di.data[i].value != di.data[i - 1].value) ||
+			(di.data[i].time > cc.x1))
+		{
+			int data = (int)(di.data[i0].value);
+			//in spectra mode, bg color is used to represent the value
+			BgBrush.SetColor(Color(data & 0xFF, data & 0xFF, data & 0xFF));
+			float w;
+			if (i < di.data.size()) w = (di.data[i].time - di.data[i0].time + 1) * cc.scale_x;
+			else w = (data_manager.x_max - di.data[i0].time + 1) * cc.scale_x;
+			RectF rc(di.data[i0].time * cc.scale_x, (cc.y0 + id + 1) * cc.scale_y, w, -1.0f * cc.scale_y);
+			graphics.FillRectangle(&BgBrush, rc);
+			i0 = i;
+		}
+		if (i<di.data.size() && di.data[i].time <= time_cursor) fCursorValue = di.data[i].value;
+	}
+	graphics.ResetClip();
+
+	SolidBrush AnnotBgBrush(Color(100, 255, 255, 255));
+	RectF txtBox;
+	SolidBrush ValueBgBrush(Color::Gray);
+	SolidBrush ValueFgBrush(Color::White);
+
+	//draw data cursor
+	float time_cursor_lc = time_cursor;
+	bool bDrawCursor = (time_cursor_lc > cc.x0 && time_cursor_lc < cc.x1);
+	if (bDrawCursor)
+	{
+		Pen penCursor(Color::Gray, 1);
+		graphics.DrawLine(&penCursor, PointF(time_cursor_lc*cc.scale_x, cc.y0*cc.scale_y), PointF(time_cursor_lc*cc.scale_x, cc.y1*cc.scale_y));
+
+		swprintf(strinfo, L" %.2f", time_cursor_lc);
+		graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnotVal, RectF(), &stringformat, &txtBox);
+		txtBox.X = time_cursor_lc * cc.scale_x - txtBox.Width / 2;
+		txtBox.Y = cc.y0 * cc.scale_y;
+		graphics.FillRectangle(&ValueBgBrush, txtBox);
+		graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnotVal, txtBox, &stringformat, &ValueFgBrush);
+	}
+	if (id == cnt-1)
+	{
+#ifdef _UNICODE
+		_tcscpy(strinfo, di.name);
+#else
+		mbstowcs(strinfo, di.name, 128);
+#endif
+		graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnot, RectF(), &stringformat, &txtBox);
+		txtBox.X = cc.x1 * cc.scale_x - txtBox.Width;
+		txtBox.Y = (cc.y0 + id + 1) * cc.scale_y;
+
+		graphics.FillRectangle(&AnnotBgBrush, txtBox);
+		graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnot, txtBox, &stringformat, &FgBrush);
+	}
+
+	if (0 && bDrawCursor)
+	{
+		swprintf(strinfo, L" %d", (int)(fCursorValue));
+		graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnotVal, RectF(), &stringformat, &txtBox);
+		txtBox.X = cc.x1 * cc.scale_x;
+		txtBox.Y = (cc.y0 + id + 1) * cc.scale_y;
+		graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnotVal, txtBox, &stringformat, &ValueBgBrush);
+	}
+}
 void DSOClass::draw_curve(Graphics &graphics, data_info & di, int id)
 {
 	REAL dashValues[4] = { 1, 1, 1, 1 };
@@ -753,11 +857,15 @@ void DSOClass::update(Graphics &graphics)
         group_info &g = data_manager.group[i];
         float range = g.range_max - g.range_min;
         float margin = (range == 0 ? 1.0f : range) * 0.05f;
-		int cur_height = g.bIsDigital ? (DIGITAL_SIGNAL_HEIGHT*g.ids.size()) : plot_height;
-		
+		int cur_height = plot_height;
+		if (g.bIsDigital) cur_height = DIGITAL_SIGNAL_HEIGHT * g.ids.size();
+		if (g.iSpectraHeight > 0) cur_height = g.iSpectraHeight * g.ids.size();
+
 		//setup coordinate and draw
-		if (g.bIsDigital) 
+		if (g.bIsDigital || g.iSpectraHeight > 0)
+		{
 			set_coord(graphics, Rect(x0, y + vmargin, subrc_width, cur_height), time_x0, time_x1, 0, g.ids.size());//each signal take range of 1 
+		}
         else
         {
             //re-calculate data range within current time window
@@ -786,7 +894,8 @@ void DSOClass::update(Graphics &graphics)
 		for (unsigned int j = 0; j < g.ids.size(); j++){
             data_info &di = data_manager.data[g.ids[j]];
             if (g.bIsDigital) 	draw_digital(graphics, di, j);
-			else 				draw_curve(graphics, di, j);
+			else if (g.iSpectraHeight > 0) draw_spectra(graphics, di, j, g.ids.size());
+			else draw_curve(graphics, di, j);
         }
         y += cur_height + 2 * vmargin;
     }
@@ -1206,6 +1315,16 @@ void emulDSO_record3(const TCHAR * data_name, const TCHAR * style, int tick_offs
     DSOClass * pDSO = _emulDSO_find_Data(data_name, inner_data_name);
     x = tick_log[(tick_id + tick_offset) & 255];
     pDSO->record(inner_data_name, style, x, value);
+}
+
+void emulDSO_recordS(const TCHAR * data_name, const TCHAR * style, int index, float value)
+{
+	TCHAR Spectra_data_name[256];
+	TCHAR inner_data_name[256];
+	_stprintf(Spectra_data_name, _TEXT("%s.%d"), data_name, index);
+	DSOClass * pDSO = _emulDSO_find_Data(Spectra_data_name, inner_data_name);
+
+	pDSO->record(inner_data_name, style, FLT_MAX, value);
 }
 
 

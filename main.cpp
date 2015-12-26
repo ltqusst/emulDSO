@@ -10,7 +10,7 @@
 int main()
 {
     //new funtion, can generate bitmap font lib
-    emulDSO_generate_font("fontlib.c", "0123456789", 32, 32); return 0;
+    //emulDSO_generate_font("fontlib.c", "0123456789", 32, 32); return 0;
 
     int i = 0;
 	printf("Hello, emulDSO!\r\n");
@@ -30,7 +30,13 @@ int main()
         emulDSO_record("mag", "c8p", mag/10000);
 		emulDSO_record("atate.magabove200", "d", (mag>1100?1:2));
         emulDSO_record("atate.magabove100", "d", (mag>800 ? 1 : 2));
-        emulDSO_record("atate.test", "d", (i++)/5);
+        
+		i++;
+		for (int sid = 0; sid < 64; sid++)
+		{
+			emulDSO_recordS("spectra_test", "s1", sid, (i+sid));
+		}
+
 		emulDSO_record("zz", "c3", s.z);
 		emulDSO_record("xx", "c4", s.z);
 
