@@ -64,7 +64,7 @@ void emulDSO_generate_font(const char * out_file, const char * strFont, int w, i
 #define emulDSO_record(data_name, style, value)
 #define emulDSO_record2( data_name, style, x, value)
 #define emulDSO_record3( data_name, style, tick_offset, value)
-
+#define emulDSO_recordS( data_name, style, index, value)
 #endif
 
 #ifdef __cplusplus

@@ -998,6 +998,7 @@ void DSOClass::display(HDC hdc, PAINTSTRUCT *pps)
 		{
 			group_info &g = data_manager.group[i];
 			if (g.bIsDigital)  y += DIGITAL_SIGNAL_HEIGHT * g.ids.size() + 2 * vmargin;
+            else if (g.iSpectraHeight) y += g.iSpectraHeight * g.ids.size() + 2 * vmargin;
 			else y += plot_height + 2 * vmargin;
 		}
 		LeaveCriticalSection(&critical_sec_data);
@@ -1695,7 +1696,7 @@ static void DTFT_real(float * x, int N, complex * X, int M)
     }
 }
 //DTFT can be implemented by DFT/FFT, simply expanding original signal with zero to fit required length
-void DTFT_real_byFFT(float * x, int N, complex * X, int exponent)
+static void DTFT_real_byFFT(float * x, int N, complex * X, int exponent)
 {
     int points = 1<<exponent;
 	//extend N points to (2^exponent) with zero
@@ -1707,6 +1708,21 @@ void DTFT_real_byFFT(float * x, int N, complex * X, int exponent)
     FFT(X, exponent);
 }
 
+extern "C" void FFT_real_power(float * x, int N, float * Power, int exponent)
+{
+    int points = 1 << exponent;
+    complex * X = new complex[points];
+
+    DTFT_real_byFFT(x, N, X, exponent);
+
+    for (int i = 0; i < points; i++)
+    {
+        complex r = X[i].get_MagPhase();
+        Power[i] = r.r;
+    }
+
+    delete[]X;
+}
 /*
 LTI system characterized by Linear Constant-Coefficient Difference Equations
         sum(ak*y[n-k]) = sum(bk*x[n-k])
