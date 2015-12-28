@@ -281,7 +281,7 @@ struct DSOClass
 	void set_coord(Graphics &graphics, Rect &rc, float x0, float x1,float y0, float y1);
     void draw_digital(Graphics &graphics, data_info & di, int id);
 	void draw_curve(Graphics &graphics, data_info & di, int id);
-	void draw_spectra(Graphics &graphics, data_info & di, int id, int cnt);
+    void draw_spectra(Graphics &graphics, data_info & di, int id, int cnt, int lineHeight);
 
     void magnify(float time_center, int delta);
     void magnify_min(void);
@@ -515,7 +515,6 @@ static const ARGB argb_table_digit[] = {
 };
 void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
 {
-	const TCHAR * pcfg;
     WCHAR strinfo[128];
     StringFormat stringformat;
     stringformat.SetAlignment(StringAlignmentCenter);
@@ -525,7 +524,6 @@ void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
     SolidBrush FgBrush(c);
 
 	int i0,i1;
-
 	di.data_id_range(time_x0, time_x1, i0,i1);
 	
 	graphics.SetClip(cc.clip_rc);
@@ -537,17 +535,17 @@ void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
             (di.data[i].time > cc.x1))
         {
             int data = (int)(di.data[i0].value);
-			//draw data from i0 to(i-1)
-			int cid = data % (sizeof(argb_table_digit) / sizeof(argb_table_digit[0]));
-			BgBrush.SetColor(Color(argb_table_digit[cid]));
-			FgBrush.SetColor(Color((~argb_table_digit[cid]) | Color::AlphaMask));
-			float w;
-			if (i < di.data.size()) w = (di.data[i].time - di.data[i0].time) * cc.scale_x;
+            //draw data from i0 to(i-1)
+            int cid = data % (sizeof(argb_table_digit) / sizeof(argb_table_digit[0]));
+            BgBrush.SetColor(Color(argb_table_digit[cid]));
+            FgBrush.SetColor(Color((~argb_table_digit[cid]) | Color::AlphaMask));
+            float w;
+            if (i < di.data.size()) w = (di.data[i].time - di.data[i0].time) * cc.scale_x;
 			else w = (data_manager.x_max - di.data[i0].time) * cc.scale_x;
-			RectF rc(di.data[i0].time * cc.scale_x, (cc.y0 + id + 1) * cc.scale_y, w, -1.0f * cc.scale_y);
-			graphics.FillRectangle(&BgBrush, rc);
-			swprintf(strinfo, L"%d", data);
-			graphics.DrawString(strinfo, wcslen(strinfo), pfontDigital, rc, &stringformat, &FgBrush);
+            RectF rc(di.data[i0].time * cc.scale_x, (cc.y0 + id + 1) * cc.scale_y, w, -1.0f * cc.scale_y);
+            graphics.FillRectangle(&BgBrush, rc);
+            swprintf(strinfo, L"%d", data);
+            graphics.DrawString(strinfo, wcslen(strinfo), pfontDigital, rc, &stringformat, &FgBrush);
             i0 = i;
         }
         if (i<di.data.size() && di.data[i].time <= time_cursor) fCursorValue = di.data[i].value;
@@ -574,20 +572,18 @@ void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
 		graphics.FillRectangle(&ValueBgBrush, txtBox);
 		graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnotVal, txtBox, &stringformat, &ValueFgBrush);
     }
-	
 #ifdef _UNICODE
-	_tcscpy(strinfo, di.name);
+    _tcscpy(strinfo, di.name);
 #else
-	mbstowcs(strinfo, di.name, 128);
+    mbstowcs(strinfo, di.name, 128);
 #endif
-	graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnot, RectF(), &stringformat, &txtBox);
-	txtBox.X = cc.x1 * cc.scale_x - txtBox.Width;
-	txtBox.Y = (cc.y0 + id + 1) * cc.scale_y;
-
+    graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnot, RectF(), &stringformat, &txtBox);
+    txtBox.X = cc.x1 * cc.scale_x - txtBox.Width;
+    txtBox.Y = (cc.y0 + id + 1) * cc.scale_y;
 	graphics.FillRectangle(&AnnotBgBrush, txtBox);
-	graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnot, txtBox, &stringformat, &FgBrush);
-
-	if (bDrawCursor)
+    graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnot, txtBox, &stringformat, &FgBrush);
+	
+    if (bDrawCursor)
     {
         swprintf(strinfo, L" %d", (int)(fCursorValue));
 		graphics.MeasureString(strinfo, wcslen(strinfo), pfontAnnotVal, RectF(), &stringformat, &txtBox);
@@ -596,9 +592,43 @@ void DSOClass::draw_digital(Graphics &graphics, data_info & di, int id)
 		graphics.DrawString(strinfo, wcslen(strinfo), pfontAnnotVal, txtBox, &stringformat, &ValueBgBrush);
     }
 }
+//the Matlab colormap "parula"
+const unsigned char colormap_parula[256][3] = {
+    { 53, 42, 135 },    { 53, 44, 138 },    { 54, 45, 141 },    { 54, 47, 144 },    { 54, 48, 147 },    { 54, 50, 150 },    { 54, 51, 153 },    { 54, 53, 156 },
+    { 54, 54, 160 },    { 54, 56, 163 },    { 54, 57, 166 },    { 54, 59, 169 },    { 53, 61, 172 },    { 53, 62, 175 },    { 52, 64, 179 },    { 51, 65, 182 },
+    { 50, 67, 185 },    { 49, 69, 188 },    { 48, 70, 191 },    { 46, 72, 195 },    { 44, 74, 198 },    { 42, 76, 201 },    { 39, 78, 204 },    { 36, 80, 208 },
+    { 33, 82, 211 },    { 29, 84, 214 },    { 25, 87, 217 },    { 21, 89, 219 },    { 16, 91, 221 },    { 12, 93, 222 },    { 8, 95, 224 },    { 5, 97, 224 },
+    { 3, 98, 225 },    { 2, 100, 225 },    { 2, 101, 225 },    { 1, 102, 225 },    { 1, 104, 225 },    { 2, 105, 225 },    { 2, 106, 225 },    { 3, 107, 225 },
+    { 4, 108, 224 },    { 5, 109, 224 },    { 6, 110, 223 },    { 7, 111, 223 },    { 8, 112, 223 },    { 9, 113, 222 },    { 10, 114, 222 },    { 11, 115, 221 },
+    { 12, 116, 221 },    { 13, 117, 220 },    { 14, 118, 220 },    { 15, 119, 219 },    { 16, 120, 218 },    { 16, 121, 218 },    { 17, 122, 217 },    { 18, 123, 217 },
+    { 18, 124, 216 },    { 19, 125, 216 },    { 19, 126, 215 },    { 19, 127, 215 },    { 20, 128, 214 },    { 20, 129, 214 },    { 20, 130, 213 },    { 20, 131, 213 },
+    { 20, 132, 212 },    { 20, 133, 212 },    { 20, 134, 211 },    { 20, 135, 211 },    { 19, 136, 211 },    { 19, 137, 211 },    { 18, 138, 210 },    { 18, 140, 210 },
+    { 17, 141, 210 },    { 16, 142, 210 },    { 15, 143, 210 },    { 14, 145, 210 },    { 13, 146, 210 },    { 12, 147, 210 },    { 11, 149, 210 },    { 10, 150, 210 },
+    { 9, 151, 209 },    { 9, 152, 209 },   { 8, 153, 209 },    { 8, 154, 208 },    { 7, 155, 208 },    { 7, 156, 207 },    { 7, 157, 207 },    { 6, 158, 206 },    { 6, 159, 206 },
+    { 6, 160, 205 },   { 6, 161, 204 },    { 6, 162, 203 },    { 6, 163, 203 },    { 6, 164, 202 },    { 6, 164, 201 },    { 6, 165, 200 },    { 6, 166, 199 },    { 6, 167, 198 },
+    { 6, 167, 197 },    { 6, 168, 196 },    { 6, 169, 195 },    { 7, 169, 194 },    { 7, 170, 193 },    { 8, 171, 192 },    { 9, 171, 191 },    { 10, 172, 190 },    { 11, 172, 189 },
+    { 12, 173, 188 },    { 13, 174, 186 },    { 15, 174, 185 },    { 16, 175, 184 },    { 18, 175, 183 },   { 19, 176, 182 },    { 21, 176, 180 },    { 23, 177, 179 },
+    { 24, 178, 178 },    { 26, 178, 177 },    { 28, 179, 175 },   { 30, 179, 174 },    { 32, 180, 173 },    { 34, 180, 171 },    { 36, 181, 170 },    { 38, 181, 169 },    { 40, 182, 167 },
+    { 43, 182, 166 },    { 45, 183, 165 },    { 47, 183, 163 },    { 49, 184, 162 },    { 52, 184, 160 },    { 54, 185, 159 },    { 57, 185, 157 },    { 59, 186, 156 },
+    { 62, 186, 154 },    { 64, 186, 153 },    { 67, 187, 151 },   { 70, 187, 150 },    { 73, 188, 148 },    { 75, 188, 147 },    { 78, 188, 145 },    { 81, 189, 144 },    { 84, 189, 142 },
+    { 87, 189, 141 },    { 90, 189, 139 },    { 93, 190, 138 },    { 96, 190, 136 },    { 99, 190, 135 },    { 102, 190, 133 },    { 105, 190, 132 },    { 108, 191, 131 },
+    { 111, 191, 129 },    { 113, 191, 128 },    { 116, 191, 127 },    { 119, 191, 126 },    { 122, 191, 124 },    { 125, 191, 123 },    { 128, 191, 122 },    { 130, 191, 121 },
+    { 133, 191, 120 },    { 136, 191, 119 },    { 138, 191, 118 },   { 141, 191, 117 },    { 143, 191, 116 },    { 146, 191, 114 },    { 148, 191, 114 },    { 151, 191, 113 },    { 153, 191, 112 },
+    { 156, 191, 111 },    { 158, 190, 110 },   { 160, 190, 109 },    { 163, 190, 108 },    { 165, 190, 107 },    { 167, 190, 106 },    { 170, 190, 105 },    { 172, 190, 104 },    { 174, 190, 103 },
+    { 176, 189, 102 },    { 179, 189, 101 },    { 181, 189, 101 },   { 183, 189, 100 },    { 185, 189, 99 },    { 187, 189, 98 },    { 189, 188, 97 },    { 192, 188, 96 },    { 194, 188, 95 },
+    { 196, 188, 95 },    { 198, 188, 94 },    { 200, 188, 93 },    { 202, 187, 92 },    { 204, 187, 91 },    { 206, 187, 90 },    { 208, 187, 89 },    { 210, 187, 89 },    { 212, 187, 88 },
+    { 214, 186, 87 },    { 216, 186, 86 },    { 218, 186, 85 },    { 220, 186, 84 },    { 222, 186, 83 },    { 224, 186, 82 },    { 226, 185, 81 },    { 228, 185, 80 },    { 230, 185, 79 },
+    { 232, 185, 78 },    { 234, 185, 77 },    { 236, 185, 76 },    { 238, 185, 75 },    { 240, 185, 74 },    { 242, 185, 73 },    { 244, 185, 72 },    { 246, 186, 70 },    { 248, 186, 69 },
+    { 249, 187, 67 },    { 251, 188, 66 },    { 252, 188, 64 },    { 253, 189, 62 },    { 254, 191, 61 },    { 254, 192, 59 },    { 255, 193, 57 },    { 255, 194, 56 },    { 255, 196, 55 },
+    { 255, 197, 53 },    { 254, 198, 52 },    { 254, 200, 51 },    { 254, 201, 50 },    { 253, 202, 49 },    { 253, 204, 48 },    { 252, 205, 46 },    { 252, 206, 45 },
+    { 251, 207, 44 },    { 251, 209, 43 },    { 250, 210, 42 },    { 249, 211, 41 },    { 249, 213, 40 },    { 248, 214, 39 },    { 248, 215, 38 },    { 247, 217, 37 },    { 247, 218, 36 },
+    { 246, 219, 35 },    { 246, 221, 34 },    { 245, 222, 33 },    { 245, 224, 32 },    { 245, 225, 31 },    { 245, 227, 30 },    { 244, 228, 29 },    { 244, 230, 28 },
+    { 244, 232, 26 },    { 245, 233, 25 },    { 245, 235, 24 },    { 245, 237, 23 },    { 245, 239, 22 },    { 246, 241, 20 },    { 246, 243, 19 },    { 247, 245, 18 },
+    { 248, 247, 17 },    { 248, 249, 15 },    { 249, 251, 14 },
+};
 
 
-void DSOClass::draw_spectra(Graphics &graphics, data_info & di, int id, int cnt)
+void DSOClass::draw_spectra(Graphics &graphics, data_info & di, int id, int cnt, int lineHeight)
 {
 	const TCHAR * pcfg;
 	WCHAR strinfo[128];
@@ -610,29 +640,60 @@ void DSOClass::draw_spectra(Graphics &graphics, data_info & di, int id, int cnt)
 	SolidBrush FgBrush(c);
 
 	int i0, i1;
+    float time_pixel = -1;
+    float cur_time_pix = 0;
+    float data_acc = 0;
+    int   data_cnt = 0;
 
 	di.data_id_range(time_x0, time_x1, i0, i1);
 
 	graphics.SetClip(cc.clip_rc);
 	float fCursorValue = di.data[i0].value;
-	for (unsigned int i = i0; i <= i1 + 1; i++)
+    time_pixel = di.data[i0].time * cc.scale_x;
+	for (unsigned int i = i0; i <= i1; i++)
 	{
-		if ((i == di.data.size()) ||
+        cur_time_pix = di.data[i].time * cc.scale_x;
+        data_acc += di.data[i].value;
+        data_cnt ++;
+
+        if ((i == di.data.size()) ||
 			(i > 0 && di.data[i].value != di.data[i - 1].value) ||
 			(di.data[i].time > cc.x1))
 		{
-			int data = (int)(di.data[i0].value);
-			//in spectra mode, bg color is used to represent the value
-			BgBrush.SetColor(Color(data & 0xFF, data & 0xFF, data & 0xFF));
-			float w;
-			if (i < di.data.size()) w = (di.data[i].time - di.data[i0].time + 1) * cc.scale_x;
-			else w = (data_manager.x_max - di.data[i0].time + 1) * cc.scale_x;
-			RectF rc(di.data[i0].time * cc.scale_x, (cc.y0 + id + 1) * cc.scale_y, w, -1.0f * cc.scale_y);
-			graphics.FillRectangle(&BgBrush, rc);
-			i0 = i;
+            //also check if we advanced a time-pixel step, if not, accumulate the data for display
+            if ((int)time_pixel != (int)cur_time_pix)
+            {
+                data_acc -= di.data[i].value;
+                data_cnt--;
+                if (data_cnt > 0) 
+                {
+                    //draw previous time-pixel
+                    int data = (int)(data_acc / data_cnt);
+                    if (data > 255) data = 255;
+                    if (data < 0) data = 0;
+                    BgBrush.SetColor(Color(colormap_parula[data][0], colormap_parula[data][1], colormap_parula[data][2]));
+                    float w = cur_time_pix - time_pixel;
+                    RectF rc(time_pixel, (cc.y0 + id + 1) * cc.scale_y, w+0.5f, -lineHeight * cc.scale_y);
+                    graphics.FillRectangle(&BgBrush, rc);
+                }
+                time_pixel = cur_time_pix;
+                data_acc = di.data[i].value;
+                data_cnt = 1;
+            }
 		}
 		if (i<di.data.size() && di.data[i].time <= time_cursor) fCursorValue = di.data[i].value;
 	}
+    //draw last time-pixel
+    if (data_cnt > 0){
+        int data = (int)(data_acc / data_cnt);
+        if (data > 255) data = 255;
+        if (data < 0) data = 0;
+        BgBrush.SetColor(Color(colormap_parula[data][0], colormap_parula[data][1], colormap_parula[data][2]));
+        float w = cur_time_pix - time_pixel;
+        RectF rc(time_pixel, (cc.y0 + id + 1) * cc.scale_y, w, -lineHeight * cc.scale_y);
+        graphics.FillRectangle(&BgBrush, rc);
+    }
+
 	graphics.ResetClip();
 
 	SolidBrush AnnotBgBrush(Color(100, 255, 255, 255));
@@ -894,7 +955,7 @@ void DSOClass::update(Graphics &graphics)
 		for (unsigned int j = 0; j < g.ids.size(); j++){
             data_info &di = data_manager.data[g.ids[j]];
             if (g.bIsDigital) 	draw_digital(graphics, di, j);
-			else if (g.iSpectraHeight > 0) draw_spectra(graphics, di, j, g.ids.size());
+            else if (g.iSpectraHeight > 0) draw_spectra(graphics, di, j, g.ids.size(), g.iSpectraHeight);
 			else draw_curve(graphics, di, j);
         }
         y += cur_height + 2 * vmargin;
