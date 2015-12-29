@@ -673,7 +673,7 @@ void DSOClass::draw_spectra(Graphics &graphics, data_info & di, int id, int cnt,
                     if (data < 0) data = 0;
                     BgBrush.SetColor(Color(colormap_parula[data][0], colormap_parula[data][1], colormap_parula[data][2]));
                     float w = cur_time_pix - time_pixel;
-                    RectF rc(time_pixel, (cc.y0 + id + 1) * cc.scale_y, w+0.5f, -lineHeight * cc.scale_y);
+                    RectF rc(time_pixel, (cc.y0 + id + lineHeight) * cc.scale_y, w + 0.5f, -lineHeight * cc.scale_y + 0.5f);
                     graphics.FillRectangle(&BgBrush, rc);
                 }
                 time_pixel = cur_time_pix;
@@ -1381,6 +1381,7 @@ void emulDSO_record3(const TCHAR * data_name, const TCHAR * style, int tick_offs
 
 void emulDSO_recordS(const TCHAR * data_name, const TCHAR * style, int index, float value)
 {
+    if (!cfg_enable) return;
 	TCHAR Spectra_data_name[256];
 	TCHAR inner_data_name[256];
 	_stprintf(Spectra_data_name, _TEXT("%s.%d"), data_name, index);
